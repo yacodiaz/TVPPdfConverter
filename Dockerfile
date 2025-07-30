@@ -40,8 +40,9 @@ RUN mkdir -p /app/wwwroot/tmp
 RUN mkdir -p /app/tools
 
 # Configurar variables de entorno
-ENV ASPNETCORE_URLS=http://+:8080
+# Railway inyecta la variable PORT automáticamente
 ENV ASPNETCORE_ENVIRONMENT=Production
+ENV ASPNETCORE_FORWARDEDHEADERS_ENABLED=true
 
 # Punto de entrada
 ENTRYPOINT ["dotnet", "TVPPdfConverter.dll"] 

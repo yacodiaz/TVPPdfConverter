@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: tvp-pdf-converter
+    env: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    envVars:
+      - key: ASPNETCORE_ENVIRONMENT
+        value: Production
+      - key: ASPNETCORE_URLS
+        value: http://0.0.0.0:10000
+    healthCheckPath: /swagger
+    autoDeploy: true
+    buildFilter:
+      paths:
+        - "**/*"
+      ignoredPaths:
+        - "*.md"
+        - ".gitignore" 

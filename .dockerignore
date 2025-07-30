@@ -1,0 +1,38 @@
+# Archivos de Git
+.git
+.gitignore
+.gitattributes
+
+# Documentación
+README.md
+*.md
+
+# Archivos de configuración de IDE
+.vs/
+.vscode/
+.idea/
+
+# Archivos de build y temporales
+bin/
+obj/
+out/
+Dockerfile
+.dockerignore
+
+# Archivos de ejemplo y temporales
+Examples/
+wwwroot/tmp/
+temp_*.txt
+test_*.zip
+result_*.xls
+*.tmp
+
+# Logs
+*.log
+
+# OS específicos
+.DS_Store
+Thumbs.db
+
+# Archivos de configuración local
+appsettings.Development.json 

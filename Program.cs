@@ -24,6 +24,7 @@ builder.Services.Configure<FormOptions>(options =>
 {
     options.MultipartBodyLengthLimit = 100_000_000; // 100 MB
 });
+builder.WebHost.UseUrls("http://0.0.0.0:8080");
 
 var app = builder.Build();
 
@@ -43,7 +44,6 @@ app.MapGet("/health", () => "OK");
 
 // Endpoint de información básica
 app.MapGet("/", () => "TVP PDF Converter API - Ve a /swagger para la documentación");
-
 app.UseStaticFiles();           // habilita wwwroot
 app.UseHttpsRedirection();
 app.UseAuthorization();

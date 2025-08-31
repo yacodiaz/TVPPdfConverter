@@ -16,6 +16,9 @@ namespace TVPPdfConverter.Services
         private readonly string _pdftotextExe;
         private static readonly CompareInfo Ci = new CultureInfo("es-ES").CompareInfo;
         private static readonly Regex MoneyRegex = new Regex(@"\d+\.\d+", RegexOptions.Compiled);
+        private static readonly Regex DetailRegex = new Regex(
+            @"^(?<concepto>.+?)\s+(?<instrumento>[\p{L}. ]+?)\s+(?<fdesde>\d{2}/\d{2}/\d{2,4})\s*a\s*(?<fhasta>\d{2}/\d{2}/\d{2,4})\s+(?<hdesde>\d{2}:\d{2})\s*a\s*(?<hhasta>\d{2}:\d{2})\s+(?<dias>\d+)\s+(?<horas>\d+)\s+(?<unit>[\d.,]+)\s+(?<sub>[\d.,]+)\s*$",
+            RegexOptions.Compiled);
 
         public PdfTextExtractor(string pdftotextExe)
         {
@@ -28,28 +31,39 @@ namespace TVPPdfConverter.Services
 
         public IEnumerable<InvoiceLine> Extract(string pdfPath)
         {
-            // 0 – descartar si está marcado "DUPLICADO"
-            using var dupDoc = PdfDocument.Open(pdfPath);
-            if (dupDoc.GetPage(1).Text
-                       .IndexOf("DUPLICADO", StringComparison.OrdinalIgnoreCase) >= 0)
-                yield break;
-
-            // 1 – extraer texto con pdftotext en UTF-8
-            var psi = new ProcessStartInfo
+            // Nota: ya no descartamos PDFs marcados como "DUPLICADO" aquí.
+            // La decisión de procesar originales vs duplicados se toma a nivel de controlador por ZIP.
+        
+            // 1 - extraer texto, con fallback a PdfPig si pdftotext no está disponible
+            string text = string.Empty;
+            try
             {
-                FileName = _pdftotextExe,
-                Arguments = $"-layout \"{pdfPath}\" -",
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                StandardOutputEncoding = Encoding.UTF8,
-                CreateNoWindow = true
-            };
-
-            string text;
-            using (var p = Process.Start(psi)!)
+                var psi = new ProcessStartInfo
+                {
+                    FileName = _pdftotextExe,
+                    Arguments = $"-layout \"{pdfPath}\" -",
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    StandardOutputEncoding = Encoding.UTF8,
+                    CreateNoWindow = true
+                };
+                using (var p = Process.Start(psi)!)
+                {
+                    text = p.StandardOutput.ReadToEnd();
+                    p.WaitForExit();
+                }
+            }
+            catch
             {
-                text = p.StandardOutput.ReadToEnd();
-                p.WaitForExit();
+                // Fallback: extraer texto usando PdfPig
+                Console.Error.WriteLine("pdftotext no disponible o falló. Usando PdfPig para extracción de texto.");
+                using var docForText = PdfDocument.Open(pdfPath);
+                var sbAll = new StringBuilder();
+                foreach (var page in docForText.GetPages())
+                {
+                    sbAll.AppendLine(page.Text);
+                }
+                text = sbAll.ToString();
             }
 
             // 2 – metadatos de cabecera
@@ -80,6 +94,22 @@ namespace TVPPdfConverter.Services
 
             var header = lines[headerIdx];
             var headerNorm = RemoveDiacritics(header).ToLowerInvariant();
+
+            // Programa: intentar extraer "Programa: <nombre>" en la cabecera
+            string programa = string.Empty;
+            var progMatchText = Regex.Match(text, @"Programa:\s*([^\r\n]+)", RegexOptions.IgnoreCase);
+            if (progMatchText.Success)
+            {
+                programa = progMatchText.Groups[1].Value.Trim();
+            }
+            else
+            {
+                for (int k = 0; k < Math.Min(headerIdx, 100); k++)
+                {
+                    var m = Regex.Match(lines[k], @"Programa:\s*(.+)", RegexOptions.IgnoreCase);
+                    if (m.Success) { programa = m.Groups[1].Value.Trim(); break; }
+                }
+            }
 
             int posConcept = headerNorm.IndexOf("concepto", StringComparison.Ordinal);
             int posInstr = headerNorm.IndexOf("instrumento", StringComparison.Ordinal);
@@ -150,6 +180,25 @@ namespace TVPPdfConverter.Services
                     ? moneyMatches.Last()
                     : "0";
 
+                // Heurística: si el campo instrumento contiene patrones de fecha/hora
+                // o si las fechas/horas no parecen válidas, intentamos un parseo por regex de toda la línea.
+                bool suspect = instrumento.Contains("/") || instrumento.Contains(":") || instrumento.Contains(" a ");
+                if (suspect || string.IsNullOrWhiteSpace(fDesde) || string.IsNullOrWhiteSpace(hDesde))
+                {
+                    var m = DetailRegex.Match(line);
+                    if (m.Success)
+                    {
+                        conceptoTxt = m.Groups["concepto"].Value.Trim();
+                        instrumento = m.Groups["instrumento"].Value.Trim();
+                        fDesde = m.Groups["fdesde"].Value.Trim();
+                        fHasta = m.Groups["fhasta"].Value.Trim();
+                        hDesde = m.Groups["hdesde"].Value.Trim();
+                        hHasta = m.Groups["hhasta"].Value.Trim();
+                        unitTxt = m.Groups["unit"].Value.Trim();
+                        subTxt = m.Groups["sub"].Value.Trim();
+                    }
+                }
+
                 // valor numérico mínimo: validamos que tengamos fechas y horas
                 if (string.IsNullOrWhiteSpace(fDesde) || string.IsNullOrWhiteSpace(hDesde))
                     continue;
@@ -168,7 +217,8 @@ namespace TVPPdfConverter.Services
                     ParseDecimal(unitTxt),
                     ParseDecimal(subTxt),
                     // Valores temporales - se actualizarán después
-                    0m, 0m, 0m, 0m, 0m, 0m, 0m
+                    0m, 0m, 0m, 0m, 0m, 0m, 0m,
+                    programa
                 ));
             }
 

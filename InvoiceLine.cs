@@ -21,4 +21,5 @@ public record InvoiceLine(
     decimal RecursoAdministrativo,
     decimal Tasa,
     decimal Transporte,
-    decimal TotalFactura);
+    decimal TotalFactura,
+    string Programa);

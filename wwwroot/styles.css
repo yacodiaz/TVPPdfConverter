@@ -1,0 +1,39 @@
+:root{
+  --bg:#0f172a; /* slate-900 */
+  --card:#111827; /* gray-900 */
+  --muted:#94a3b8; /* slate-400 */
+  --text:#e5e7eb; /* gray-200 */
+  --accent:#7c3aed; /* violet-600 */
+  --accent-2:#22d3ee; /* cyan-400 */
+  --ok:#10b981; --warn:#f59e0b; --err:#ef4444;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto}
+body{background:linear-gradient(120deg,#0b1220,#0f172a 30%,#0b1220);color:var(--text)}
+.app-header{display:flex;justify-content:space-between;align-items:center;padding:16px 24px;border-bottom:1px solid #1f2937;position:sticky;top:0;background:rgba(15,23,42,.8);backdrop-filter:blur(8px)}
+.brand{display:flex;gap:12px;align-items:center}
+.brand .logo{font-size:22px}
+.brand .title{font-weight:700;letter-spacing:.3px}
+.app-header a{color:var(--muted);text-decoration:none;margin-left:16px}
+.app-header a:hover{color:#fff}
+.container{max-width:1100px;margin:24px auto;padding:0 16px;display:grid;gap:16px}
+.card{background:linear-gradient(180deg,#0b1021,#0c1226);border:1px solid #1f2937;border-radius:14px;padding:18px;box-shadow:0 10px 30px rgba(0,0,0,.25)}
+.upload input[type=file]{width:100%;padding:12px;background:#0b1220;border:1px dashed #334155;border-radius:10px;color:var(--muted)}
+.actions{margin-top:12px;display:flex;gap:10px}
+button{padding:10px 14px;border-radius:10px;border:1px solid #334155;background:#0b1220;color:#e5e7eb;cursor:pointer}
+button.primary{background:linear-gradient(135deg,var(--accent),var(--accent-2));border:none}
+button:hover{filter:brightness(1.1)}
+.status{margin-top:10px;min-height:22px;color:var(--muted)}
+.cols{margin-top:14px}
+.cols-list{display:grid;grid-template-columns:repeat(2,minmax(220px,1fr));gap:8px;margin:8px 0}
+.cols-list label{display:flex;align-items:center;gap:8px;padding:8px;border:1px solid #1f2937;border-radius:8px;background:#0b1220}
+.cols-actions{display:flex;gap:8px;margin-bottom:8px}
+.summary{list-style:none;padding:0;margin:0;display:flex;gap:16px;flex-wrap:wrap}
+.summary strong{color:#fff}
+.errors{margin-top:8px;color:#fecaca}
+.table-scroll{overflow:auto;max-height:420px;border:1px solid #1f2937;border-radius:10px}
+table{width:100%;border-collapse:collapse}
+thead th{position:sticky;top:0;background:#0b1220;border-bottom:1px solid #1f2937;text-align:left;padding:10px}
+tbody td{border-bottom:1px solid #111827;padding:8px;color:#cbd5e1}
+.muted{color:var(--muted)}
+.app-footer{padding:18px;text-align:center;color:var(--muted)}

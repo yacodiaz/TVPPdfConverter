@@ -11,6 +11,9 @@ builder.Services.AddSwaggerGen(c =>
     c.SwaggerDoc("v1", new OpenApiInfo { Title = "Facturas API", Version = "v1" });
 });
 
+// Pdf discovery defaults
+builder.Services.AddSingleton(new TVPPdfConverter.Services.Discovery.PdfDiscoveryService());
+
 // Configurar forwarded headers para Railway
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
@@ -24,7 +27,16 @@ builder.Services.Configure<FormOptions>(options =>
 {
     options.MultipartBodyLengthLimit = 100_000_000; // 100 MB
 });
-builder.WebHost.UseUrls("http://0.0.0.0:8080");
+// Escuchar el puerto inyectado por la plataforma (Render/otros) o 8080 por defecto
+var portEnv = Environment.GetEnvironmentVariable("PORT");
+if (!string.IsNullOrWhiteSpace(portEnv))
+{
+    builder.WebHost.UseUrls($"http://0.0.0.0:{portEnv}");
+}
+else
+{
+    builder.WebHost.UseUrls("http://0.0.0.0:8080");
+}
 
 var app = builder.Build();
 
@@ -42,8 +54,8 @@ app.UseSwaggerUI(c =>
 // Agregar un endpoint simple de health check
 app.MapGet("/health", () => "OK");
 
-// Endpoint de información básica
-app.MapGet("/", () => "TVP PDF Converter API - Ve a /swagger para la documentación");
+// Servir UI estática desde wwwroot (index.html en /)
+app.UseDefaultFiles();
 app.UseStaticFiles();           // habilita wwwroot
 app.UseHttpsRedirection();
 app.UseAuthorization();

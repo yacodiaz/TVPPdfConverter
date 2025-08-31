@@ -11,6 +11,15 @@
     <PackageReference Include="PdfPig" Version="0.1.10" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.6.2" />
     <PackageReference Include="Tabula" Version="0.1.5" />
+    <PackageReference Include="SharpCompress" Version="0.33.0" />
+  </ItemGroup>
+
+  <!-- Copiar herramientas (pdftotext.exe, etc.) si existen en tools/ -->
+  <ItemGroup>
+    <Content Include="tools\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
   </ItemGroup>
 
 </Project>

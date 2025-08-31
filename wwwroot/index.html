@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TVP PDF Converter</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <div class="brand">
+        <div class="logo">📄➡️📊</div>
+        <div class="title">TVP PDF Converter</div>
+      </div>
+      <nav>
+        <a href="/swagger" target="_blank">Swagger</a>
+        <a href="#" id="open-examples">Ejemplos</a>
+      </nav>
+    </header>
+
+    <main class="container">
+      <section class="card upload">
+        <h2>Subir ZIP con PDFs</h2>
+        <p class="muted">Procesa pre-liquidaciones/facturas y descarga un Excel con los datos.</p>
+        <form id="upload-form">
+          <input type="file" id="zip" name="zip" accept=".zip" />
+          <div class="cols">
+            <h3>Columnas</h3>
+            <div id="cols-list" class="cols-list"></div>
+            <div class="cols-actions">
+              <button type="button" id="col-up">Subir</button>
+              <button type="button" id="col-down">Bajar</button>
+              <button type="button" id="col-reset">Restablecer</button>
+            </div>
+          </div>
+          <div class="actions">
+            <button type="button" id="btn-preview">Vista previa</button>
+            <button type="button" id="btn-download" class="primary">Descargar Excel</button>
+          </div>
+        </form>
+        <div id="status" class="status"></div>
+      </section>
+
+      <section class="card" id="summary-card" style="display:none">
+        <h3>Resumen</h3>
+        <ul class="summary">
+          <li><strong>Total PDFs:</strong> <span id="sum-total">0</span></li>
+          <li><strong>Duplicados:</strong> <span id="sum-dups">0</span></li>
+          <li><strong>Parseados:</strong> <span id="sum-parsed">0</span></li>
+          <li><strong>Sin datos:</strong> <span id="sum-nodata">0</span></li>
+        </ul>
+        <div id="errors" class="errors"></div>
+      </section>
+
+      <section class="card" id="preview-card" style="display:none">
+        <h3>Vista previa (hasta 200 filas)</h3>
+        <div class="table-scroll">
+          <table id="preview-table">
+            <thead></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <footer class="app-footer">
+      <small>Hecho con ❤️ para agilizar tu trabajo. | <a href="/swagger" target="_blank">API</a></small>
+    </footer>
+
+    <script src="/app.js"></script>
+  </body>
+  </html>

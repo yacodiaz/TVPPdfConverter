@@ -21,7 +21,7 @@
     <main class="container">
       <section class="card upload">
         <h2>Subir ZIP con PDFs</h2>
-        <p class="muted">Procesa pre-liquidaciones/facturas y descarga un Excel con los datos.</p>
+        <p class="muted">Al seleccionar el archivo se genera una vista previa automáticamente.</p>
         <form id="upload-form">
           <input type="file" id="zip" name="zip" accept=".zip" />
           <div class="progress" id="progress" aria-hidden="true">
@@ -29,16 +29,24 @@
             <div class="label" id="progress-label">0%</div>
           </div>
           <div class="cols">
-            <h3>Columnas</h3>
-            <div id="cols-list" class="cols-list"></div>
-            <small class="muted">Arrastrá para reordenar. Destildá para ocultar.</small>
+            <h3>Diseñador de columnas</h3>
+            <small class="muted">Arrastrá las fichas para reordenar u ocultar columnas. Lo de arriba se exporta.</small>
+            <div class="zones">
+              <div class="zone">
+                <div class="zone-title">Visibles (orden de exportación)</div>
+                <div id="cols-enabled" class="chips" aria-label="columnas visibles"></div>
+              </div>
+              <div class="zone">
+                <div class="zone-title">Ocultas</div>
+                <div id="cols-disabled" class="chips" aria-label="columnas ocultas"></div>
+              </div>
+            </div>
             <div class="cols-actions">
               <button type="button" id="col-reset">Restablecer</button>
             </div>
           </div>
           <label class="toggle"><input type="checkbox" id="chk-dup" /> Procesar PDFs marcados como "DUPLICADO"</label>
           <div class="actions">
-            <button type="button" id="btn-preview">Vista previa</button>
             <button type="button" id="btn-download" class="primary">Descargar Excel</button>
           </div>
         </form>
@@ -57,7 +65,7 @@
       </section>
 
       <section class="card" id="preview-card">
-        <h3>Vista previa (hasta 200 filas)</h3>
+        <h3>Vista previa</h3>
         <div class="table-scroll table-scroll-x">
           <table id="preview-table">
             <thead></thead>

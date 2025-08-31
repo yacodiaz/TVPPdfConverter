@@ -13,11 +13,33 @@ let defaultColumns = [
   'RecursoAdministrativo','Tasa','Transporte','TotalFactura','Programa'
 ];
 let selectedColumns = [...defaultColumns];
+let enabledCols = new Set(defaultColumns);
 
 function renderColumns(){
-  colsList.innerHTML = selectedColumns.map((c,i)=>
-    `<label><input type="checkbox" data-col="${c}" checked />${c}</label>`
+  colsList.innerHTML = selectedColumns.map((c)=>
+    `<label draggable="true" data-col="${c}"><input type="checkbox" data-col="${c}" ${enabledCols.has(c)?'checked':''}/> ${c}</label>`
   ).join('');
+  // drag & drop handlers
+  colsList.querySelectorAll('label').forEach(lbl=>{
+    lbl.addEventListener('dragstart', (e)=>{
+      e.dataTransfer.setData('text/plain', lbl.dataset.col);
+      lbl.classList.add('dragging');
+    });
+    lbl.addEventListener('dragend', ()=> lbl.classList.remove('dragging'));
+    lbl.addEventListener('dragover', (e)=> e.preventDefault());
+    lbl.addEventListener('drop', (e)=>{
+      e.preventDefault();
+      const from = e.dataTransfer.getData('text/plain');
+      const to = lbl.dataset.col;
+      if(!from || !to || from===to) return;
+      const i = selectedColumns.indexOf(from);
+      const j = selectedColumns.indexOf(to);
+      if(i<0 || j<0) return;
+      selectedColumns.splice(i,1);
+      selectedColumns.splice(j,0,from);
+      renderColumns();
+    });
+  });
 }
 
 function getSelectedOrdered(){
@@ -48,7 +70,10 @@ async function preview(){
     setStatus('Procesando vista previa...');
     sumCard.style.display='none';
     prevCard.style.display='none';
-    const res = await fetch('/api/invoices/preview', { method:'POST', body: toFormData() });
+    const fd = toFormData();
+    const dup = document.getElementById('chk-dup');
+    if(dup && dup.checked) fd.append('processDuplicates','true');
+    const res = await fetch('/api/invoices/preview', { method:'POST', body: fd });
     if(!res.ok){
       let msg = 'Error al previsualizar.';
       try{ const j = await res.json(); msg = j.message || msg; }catch{ }
@@ -88,6 +113,8 @@ async function download(){
     const fd = toFormData();
     const order = getSelectedOrdered();
     if(order && order.length) fd.append('columns', JSON.stringify(order));
+    const dup = document.getElementById('chk-dup');
+    if(dup && dup.checked) fd.append('processDuplicates','true');
     const res = await fetch('/api/invoices/upload', { method:'POST', body: fd });
     const ct = res.headers.get('content-type') || '';
     if(!res.ok){
@@ -115,16 +142,11 @@ async function download(){
 $('#btn-preview').addEventListener('click', preview);
 $('#btn-download').addEventListener('click', download);
 
-// Column ordering actions
-$('#col-up').addEventListener('click', ()=>{
-  const checks = Array.from(colsList.querySelectorAll('input[type="checkbox"]'));
-  const idx = checks.findIndex(c=>c.matches(':focus'));
-  if(idx>0){ const col = selectedColumns[idx]; selectedColumns.splice(idx,1); selectedColumns.splice(idx-1,0,col); renderColumns(); checks[idx-1]?.focus(); }
+// Maintain enabled set when user toggles checks
+colsList.addEventListener('change', (e)=>{
+  const t = e.target;
+  if(t && t.type==='checkbox'){
+    if(t.checked) enabledCols.add(t.dataset.col); else enabledCols.delete(t.dataset.col);
+  }
 });
-$('#col-down').addEventListener('click', ()=>{
-  const checks = Array.from(colsList.querySelectorAll('input[type="checkbox"]'));
-  const idx = checks.findIndex(c=>c.matches(':focus'));
-  if(idx>=0 && idx<selectedColumns.length-1){ const col = selectedColumns[idx]; selectedColumns.splice(idx,1); selectedColumns.splice(idx+1,0,col); renderColumns(); checks[idx+1]?.focus(); }
-});
-$('#col-reset').addEventListener('click', ()=>{ selectedColumns=[...defaultColumns]; renderColumns(); });
-
+$('#col-reset').addEventListener('click', ()=>{ selectedColumns=[...defaultColumns]; enabledCols = new Set(defaultColumns); renderColumns(); });

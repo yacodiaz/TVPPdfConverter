@@ -61,12 +61,12 @@ public class InvoicesController : ControllerBase
     [Consumes("multipart/form-data")]
     [ProducesResponseType(typeof(FileContentResult), Microsoft.AspNetCore.Http.StatusCodes.Status200OK, "application/vnd.ms-excel")] 
     [ProducesResponseType(Microsoft.AspNetCore.Http.StatusCodes.Status400BadRequest)]
-    public async Task<IActionResult> Upload(IFormFile zip, [FromForm] string? columns = null)
+    public async Task<IActionResult> Upload(IFormFile zip, [FromForm] string? columns = null, [FromForm] bool processDuplicates = false)
     {
         if (zip == null || !zip.FileName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
             return BadRequest(new { message = "Debe subir un archivo .zip" });
 
-        var summary = await BuildSummaryAsync(zip.OpenReadStream(), HttpContext.RequestAborted);
+        var summary = await BuildSummaryAsync(zip.OpenReadStream(), HttpContext.RequestAborted, previewLimit: null, processDuplicates: processDuplicates);
         if (summary.Lines.Count == 0)
         {
             string message = summary.Duplicates == summary.TotalPdfs && summary.TotalPdfs > 0
@@ -198,12 +198,12 @@ public class InvoicesController : ControllerBase
     [Consumes("multipart/form-data")]
     [ProducesResponseType(typeof(object), 200, "application/json")]
     [ProducesResponseType(400)]
-    public async Task<IActionResult> Preview(IFormFile zip)
+    public async Task<IActionResult> Preview(IFormFile zip, [FromForm] bool processDuplicates = false)
     {
         if (zip == null || !zip.FileName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
             return BadRequest(new { message = "Debe subir un archivo .zip" });
 
-        var summary = await BuildSummaryAsync(zip.OpenReadStream(), HttpContext.RequestAborted, previewLimit: 200);
+        var summary = await BuildSummaryAsync(zip.OpenReadStream(), HttpContext.RequestAborted, previewLimit: 200, processDuplicates: processDuplicates);
         var message = summary.ParsedPdfs > 0
             ? $"Se extrajeron {summary.Lines.Count} filas desde {summary.ParsedPdfs} PDF(s). Duplicados: {summary.Duplicates}. Sin datos: {summary.NoDataPdfs}."
             : (summary.Duplicates == summary.TotalPdfs && summary.TotalPdfs > 0 ? "Todos los PDFs están marcados como DUPLICADO." : (summary.TotalPdfs == 0 ? "El ZIP no contiene PDFs." : "No se pudo extraer información de los PDFs."));
@@ -235,7 +235,7 @@ public class InvoicesController : ControllerBase
         }
     }
 
-    private async Task<UploadSummary> BuildSummaryAsync(Stream zipStream, CancellationToken ct, int? previewLimit = null)
+    private async Task<UploadSummary> BuildSummaryAsync(Stream zipStream, CancellationToken ct, int? previewLimit = null, bool processDuplicates = false)
     {
         var s = new UploadSummary();
         var temps = new List<(string path, bool isDup)>();
@@ -249,15 +249,15 @@ public class InvoicesController : ControllerBase
                 temps.Add((tmp, dup));
             }
 
-            // Selección: si hay originales, procesar solo originales; si no, procesar duplicados
+            // Selección según preferencia del usuario
             var hasOriginals = temps.Exists(t => !t.isDup);
-            var selected = hasOriginals ? temps.FindAll(t => !t.isDup) : temps;
+            var selected = processDuplicates ? temps : (hasOriginals ? temps.FindAll(t => !t.isDup) : temps);
             _logger.LogInformation("Selección de PDFs: Totales={Total}, Originales={Originales}, Duplicados={Duplicados}. Se procesarán {Procesar} ({Tipo}).",
                 s.TotalPdfs,
                 temps.Count(t => !t.isDup),
                 temps.Count(t => t.isDup),
                 selected.Count,
-                hasOriginals ? "originales" : "duplicados");
+                processDuplicates ? (hasOriginals ? "originales+duplicados" : "duplicados") : (hasOriginals ? "originales" : "duplicados"));
 
             foreach (var (path, isDup) in selected)
             {

@@ -26,7 +26,9 @@ button:hover{filter:brightness(1.1)}
 .status{margin-top:10px;min-height:22px;color:var(--muted)}
 .cols{margin-top:14px}
 .cols-list{display:grid;grid-template-columns:repeat(2,minmax(220px,1fr));gap:8px;margin:8px 0}
-.cols-list label{display:flex;align-items:center;gap:8px;padding:8px;border:1px solid #1f2937;border-radius:8px;background:#0b1220}
+.cols-list label{display:flex;align-items:center;gap:8px;padding:8px;border:1px solid #1f2937;border-radius:8px;background:#0b1220; cursor:grab}
+.cols-list label.dragging{opacity:.6; border-color:#334155}
+.toggle{display:inline-flex;align-items:center;gap:8px;margin:8px 0;color:#cbd5e1}
 .cols-actions{display:flex;gap:8px;margin-bottom:8px}
 .summary{list-style:none;padding:0;margin:0;display:flex;gap:16px;flex-wrap:wrap}
 .summary strong{color:#fff}

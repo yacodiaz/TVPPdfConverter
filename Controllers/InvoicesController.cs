@@ -241,6 +241,7 @@ public class InvoicesController : ControllerBase
         var temps = new List<(string path, bool isDup)>();
         try
         {
+            _logger.LogInformation("[DISCOVER] Inicio de descubrimiento de PDFs en ZIP...");
             await foreach (var tmp in _discovery.DiscoverTempPdfFilesFromZipStreamAsync(zipStream, options: null, cancellationToken: ct))
             {
                 s.TotalPdfs++;
@@ -248,7 +249,7 @@ public class InvoicesController : ControllerBase
                 if (dup) s.Duplicates++;
                 temps.Add((tmp, dup));
             }
-
+            _logger.LogInformation("[DISCOVER] Encontrados {Total} PDFs (duplicados: {Dup}).", s.TotalPdfs, s.Duplicates);
             // Selección según preferencia del usuario
             var hasOriginals = temps.Exists(t => !t.isDup);
             var selected = processDuplicates ? temps : (hasOriginals ? temps.FindAll(t => !t.isDup) : temps);
@@ -259,10 +260,14 @@ public class InvoicesController : ControllerBase
                 selected.Count,
                 processDuplicates ? (hasOriginals ? "originales+duplicados" : "duplicados") : (hasOriginals ? "originales" : "duplicados"));
 
+            var totalToProcess = selected.Count;
+            int processed = 0;
             foreach (var (path, isDup) in selected)
             {
                 try
                 {
+                    processed++;
+                    _logger.LogInformation("[PROCESS] ({Idx}/{Total}) Procesando {File} (dup={Dup})...", processed, totalToProcess, Path.GetFileName(path), isDup);
                     var before = s.Lines.Count;
                     foreach (var ln in _extractor.Extract(path))
                     {
@@ -272,12 +277,16 @@ public class InvoicesController : ControllerBase
                     }
                     var added = s.Lines.Count - before;
                     if (added > 0) s.ParsedPdfs++; else s.NoDataPdfs++;
+                    var pct = totalToProcess == 0 ? 100 : (int)Math.Round(processed * 100.0 / totalToProcess);
+                    _logger.LogInformation("[PROCESS] ({Idx}/{Total}) Finalizado {File}. Filas agregadas={Added}. Avance={Pct}%", processed, totalToProcess, Path.GetFileName(path), added, pct);
                 }
                 catch (Exception ex)
                 {
                     s.Errors.Add($"{Path.GetFileName(path)}: {ex.Message}");
+                    _logger.LogError(ex, "[ERROR] Falló el procesamiento de {File}", Path.GetFileName(path));
                 }
             }
+            _logger.LogInformation("[DONE] PDFs procesados={Parsed} sinDatos={NoData}. Filas totales={Rows}", s.ParsedPdfs, s.NoDataPdfs, s.Lines.Count);
             return s;
         }
         finally

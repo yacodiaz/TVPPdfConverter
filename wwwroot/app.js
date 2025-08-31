@@ -57,6 +57,23 @@ function setStatus(msg, type='info'){
   statusEl.style.color = type==='error' ? '#fecaca' : type==='warn' ? '#fbbf24' : '#94a3b8';
 }
 
+// Progreso visual (subida/procesamiento)
+const progress = document.getElementById('progress');
+const progressBar = document.getElementById('progress-bar');
+const progressLabel = document.getElementById('progress-label');
+function showProgress(pct, label){
+  if(!progress) return;
+  progress.style.display='block';
+  progressBar.style.width = Math.min(100, Math.max(0, pct)) + '%';
+  progressLabel.textContent = label ?? (Math.round(pct)+'%');
+}
+function hideProgress(){
+  if(!progress) return;
+  progress.style.display='none';
+  progressBar.style.width='0%';
+  progressLabel.textContent='0%';
+}
+
 function toFormData(){
   const f = new FormData();
   const file = $('#zip').files[0];
@@ -73,14 +90,23 @@ async function preview(){
     const fd = toFormData();
     const dup = document.getElementById('chk-dup');
     if(dup && dup.checked) fd.append('processDuplicates','true');
-    const res = await fetch('/api/invoices/preview', { method:'POST', body: fd });
-    if(!res.ok){
+    // XHR para mostrar progreso de subida
+    const xhr = new XMLHttpRequest();
+    const resp = await new Promise((resolve,reject)=>{
+      xhr.open('POST','/api/invoices/preview');
+      xhr.upload.onprogress = (e)=>{ if(e.lengthComputable){ const pct=(e.loaded/e.total)*100; showProgress(pct, `Subiendo ${Math.round(pct)}%`);} };
+      xhr.onload = ()=> resolve({ status:xhr.status, body:xhr.responseText, ct: xhr.getResponseHeader('content-type')||'' });
+      xhr.onerror = ()=> reject(new Error('Error de red'));
+      xhr.send(fd);
+      showProgress(5,'Subiendo 5%');
+    });
+    showProgress(95,'Procesando...');
+    if(resp.status < 200 || resp.status >= 300){
       let msg = 'Error al previsualizar.';
-      try{ const j = await res.json(); msg = j.message || msg; }catch{ }
-      setStatus(msg,'error');
-      return;
+      try{ msg = resp.ct.includes('application/json') ? (JSON.parse(resp.body).message || msg) : (resp.body || msg); }catch{}
+      setStatus(msg,'error'); hideProgress(); return;
     }
-    const data = await res.json();
+    const data = JSON.parse(resp.body);
     $('#sum-total').textContent = data.totalPdfs ?? 0;
     $('#sum-dups').textContent = data.duplicates ?? 0;
     $('#sum-parsed').textContent = data.parsedPdfs ?? 0;
@@ -90,7 +116,12 @@ async function preview(){
     sumCard.style.display='block';
     setStatus(data.message || '');
 
-    const rows = data.rows || [];
+    // Mock: si no hay filas, mostrar algunas para que el usuario pruebe el reordenamiento
+    const rows = (data.rows && data.rows.length ? data.rows : [
+      {InvoiceNumber:'000001', FechaEmision:'17/02/2025', Artista:'NOMBRE A', Concepto:'REPETICION 30%', Instrumento:'Guitarra', FechaDesde:'05/01/25', FechaHasta:'05/01/25', HoraDesde:'00:00', HoraHasta:'02:00', Dias:0, Horas:2, Unitario:2700, Subtotal:5400, SubtotalFactura:113400, AporteContribucionOS:6804, Jubilacion:0, RecursoAdministrativo:0, Tasa:0, Transporte:0, TotalFactura:113400, Programa:'PROGRAMA X'},
+      {InvoiceNumber:'000001', FechaEmision:'17/02/2025', Artista:'NOMBRE B', Concepto:'REPETICION 30%', Instrumento:'Bajo', FechaDesde:'05/01/25', FechaHasta:'05/01/25', HoraDesde:'00:00', HoraHasta:'02:00', Dias:0, Horas:2, Unitario:2700, Subtotal:5400, SubtotalFactura:113400, AporteContribucionOS:6804, Jubilacion:0, RecursoAdministrativo:0, Tasa:0, Transporte:0, TotalFactura:113400, Programa:'PROGRAMA X'},
+      {InvoiceNumber:'000001', FechaEmision:'17/02/2025', Artista:'NOMBRE C', Concepto:'REPETICION 30%', Instrumento:'Batería', FechaDesde:'05/01/25', FechaHasta:'05/01/25', HoraDesde:'00:00', HoraHasta:'02:00', Dias:0, Horas:2, Unitario:2700, Subtotal:5400, SubtotalFactura:113400, AporteContribucionOS:6804, Jubilacion:0, RecursoAdministrativo:0, Tasa:0, Transporte:0, TotalFactura:113400, Programa:'PROGRAMA X'}
+    ]);
     // initialize columns UI if empty
     if(!colsList.hasChildNodes()) renderColumns();
     const order = getSelectedOrdered();
@@ -100,10 +131,12 @@ async function preview(){
       tBody.innerHTML = rows.map(r=>`<tr>${cols.map(c=>`<td>${r[c] ?? ''}</td>`).join('')}</tr>`).join('');
       prevCard.style.display='block';
     }else{
-      prevCard.style.display='none';
+      prevCard.style.display='block';
     }
+    showProgress(100,'Completado'); setTimeout(hideProgress, 600);
   }catch(err){
     setStatus(err.message,'error');
+    hideProgress();
   }
 }
 
@@ -115,16 +148,23 @@ async function download(){
     if(order && order.length) fd.append('columns', JSON.stringify(order));
     const dup = document.getElementById('chk-dup');
     if(dup && dup.checked) fd.append('processDuplicates','true');
-    const res = await fetch('/api/invoices/upload', { method:'POST', body: fd });
-    const ct = res.headers.get('content-type') || '';
-    if(!res.ok){
-      let msg = 'Error al generar Excel.';
-      if(ct.includes('application/json')){ try{ const j = await res.json(); msg = j.message || msg; }catch{} }
-      else{ try{ msg = await res.text(); }catch{} }
-      setStatus(msg,'error');
-      return;
+    // XHR para mostrar progreso de subida y feedback de procesamiento
+    const xhr = new XMLHttpRequest();
+    const resp = await new Promise((resolve,reject)=>{
+      xhr.open('POST','/api/invoices/upload');
+      xhr.responseType='blob';
+      xhr.upload.onprogress=(e)=>{ if(e.lengthComputable){ const pct=(e.loaded/e.total)*100; showProgress(pct, `Subiendo ${Math.round(pct)}%`);} };
+      xhr.onload=()=> resolve({ status:xhr.status, blob:xhr.response, ct: xhr.getResponseHeader('content-type')||'' });
+      xhr.onerror=()=> reject(new Error('Error de red'));
+      xhr.send(fd);
+      showProgress(5,'Subiendo 5%');
+    });
+    showProgress(95,'Procesando...');
+    if(resp.status<200||resp.status>=300){
+      let msg='Error al generar Excel.'; try{ if(resp.ct.includes('application/json')){ const t = await resp.blob.text(); msg = JSON.parse(t).message || msg; } }catch{}
+      setStatus(msg,'error'); hideProgress(); return;
     }
-    const blob = await res.blob();
+    const blob = resp.blob;
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -134,8 +174,10 @@ async function download(){
     a.remove();
     URL.revokeObjectURL(url);
     setStatus('Excel descargado.');
+    showProgress(100,'Completado'); setTimeout(hideProgress, 600);
   }catch(err){
     setStatus(err.message,'error');
+    hideProgress();
   }
 }
 

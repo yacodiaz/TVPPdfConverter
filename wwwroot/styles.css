@@ -34,8 +34,15 @@ button:hover{filter:brightness(1.1)}
 .summary strong{color:#fff}
 .errors{margin-top:8px;color:#fecaca}
 .table-scroll{overflow:auto;max-height:420px;border:1px solid #1f2937;border-radius:10px}
+/* limitar ancho y permitir scroll horizontal */
+.table-scroll-x{max-width:100%; overflow-x:auto}
 table{width:100%;border-collapse:collapse}
 thead th{position:sticky;top:0;background:#0b1220;border-bottom:1px solid #1f2937;text-align:left;padding:10px}
 tbody td{border-bottom:1px solid #111827;padding:8px;color:#cbd5e1}
 .muted{color:var(--muted)}
 .app-footer{padding:18px;text-align:center;color:var(--muted)}
+
+/* barra de progreso */
+.progress{position:relative;height:10px;background:#111827;border:1px solid #1f2937;border-radius:8px;margin:10px 0;display:none}
+.progress .bar{position:absolute;left:0;top:0;height:100%;background:linear-gradient(135deg,var(--accent),var(--accent-2));border-radius:8px;width:0%}
+.progress .label{position:absolute;top:12px;right:8px;font-size:12px;color:var(--muted)}

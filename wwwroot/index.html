@@ -24,6 +24,10 @@
         <p class="muted">Procesa pre-liquidaciones/facturas y descarga un Excel con los datos.</p>
         <form id="upload-form">
           <input type="file" id="zip" name="zip" accept=".zip" />
+          <div class="progress" id="progress" aria-hidden="true">
+            <div class="bar" id="progress-bar" style="width:0%"></div>
+            <div class="label" id="progress-label">0%</div>
+          </div>
           <div class="cols">
             <h3>Columnas</h3>
             <div id="cols-list" class="cols-list"></div>

@@ -22,4 +22,12 @@
     </Content>
   </ItemGroup>
 
+  <!-- Excluir archivos de test del proyecto principal -->
+  <ItemGroup>
+    <Compile Remove="TVPPdfConverter.Tests\**" />
+    <Content Remove="TVPPdfConverter.Tests\**" />
+    <EmbeddedResource Remove="TVPPdfConverter.Tests\**" />
+    <None Remove="TVPPdfConverter.Tests\**" />
+  </ItemGroup>
+
 </Project>

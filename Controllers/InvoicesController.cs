@@ -61,7 +61,7 @@ public class InvoicesController : ControllerBase
     [Consumes("multipart/form-data")]
     [ProducesResponseType(typeof(FileContentResult), Microsoft.AspNetCore.Http.StatusCodes.Status200OK, "application/vnd.ms-excel")] 
     [ProducesResponseType(Microsoft.AspNetCore.Http.StatusCodes.Status400BadRequest)]
-    public async Task<IActionResult> Upload(IFormFile zip, [FromForm] string? columns = null, [FromForm] bool processDuplicates = false)
+    public async Task<IActionResult> Upload(IFormFile zip, [FromForm] bool processDuplicates = false)
     {
         if (zip == null || !zip.FileName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
             return BadRequest(new { message = "Debe subir un archivo .zip" });
@@ -77,8 +77,7 @@ public class InvoicesController : ControllerBase
             return BadRequest(new { message, totalPdfs = summary.TotalPdfs, duplicates = summary.Duplicates, parsedPdfs = summary.ParsedPdfs, noDataPdfs = summary.NoDataPdfs, summary.Errors });
         }
 
-        var selected = ParseColumns(columns);
-        var bytes = ToExcel(summary.Lines, selected);
+        var bytes = ToExcel(summary.Lines);
         return File(bytes, "application/vnd.ms-excel", "invoices.xls");
     }
 
@@ -108,32 +107,16 @@ public class InvoicesController : ControllerBase
         nameof(InvoiceLine.Programa)
     };
 
-    private static List<string> ParseColumns(string? columns)
-    {
-        if (string.IsNullOrWhiteSpace(columns)) return DefaultColumns.ToList();
-        try
-        {
-            var list = JsonSerializer.Deserialize<List<string>>(columns);
-            if (list == null || list.Count == 0) return DefaultColumns.ToList();
-            // Filtrar solo válidos y preservar orden solicitado
-            var set = new HashSet<string>(DefaultColumns, StringComparer.Ordinal);
-            return list.Where(c => set.Contains(c)).ToList();
-        }
-        catch
-        {
-            return DefaultColumns.ToList();
-        }
-    }
 
-    private static byte[] ToExcel(IEnumerable<InvoiceLine> lines, List<string>? columns = null)
+    private static byte[] ToExcel(IEnumerable<InvoiceLine> lines)
     {
-        var cols = (columns == null || columns.Count == 0) ? DefaultColumns.ToList() : columns;
+        var cols = DefaultColumns;
         using var wb = new XLWorkbook();
 
         // 1) crear la hoja
         var ws = wb.Worksheets.Add("Datos");
         // 2) headers
-        for (int i = 0; i < cols.Count; i++)
+        for (int i = 0; i < cols.Length; i++)
         {
             ws.Cell(1, i + 1).Value = cols[i];
         }
@@ -141,7 +124,7 @@ public class InvoicesController : ControllerBase
         int row = 2;
         foreach (var item in lines)
         {
-            for (int i = 0; i < cols.Count; i++)
+            for (int i = 0; i < cols.Length; i++)
             {
                 var col = cols[i];
                 object? value = col switch

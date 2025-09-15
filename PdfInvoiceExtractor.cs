@@ -33,6 +33,10 @@ namespace TVPPdfConverter.Services
         {
             // Nota: ya no descartamos PDFs marcados como "DUPLICADO" aquí.
             // La decisión de procesar originales vs duplicados se toma a nivel de controlador por ZIP.
+            
+            // Debug: guardar sample de este PDF
+            var fileName = Path.GetFileName(pdfPath);
+            Console.WriteLine($"[DEBUG] Extrayendo desde: {fileName}");
         
             // 1 - extraer texto, con fallback a PdfPig si pdftotext no está disponible
             string text = string.Empty;
@@ -41,7 +45,7 @@ namespace TVPPdfConverter.Services
                 var psi = new ProcessStartInfo
                 {
                     FileName = _pdftotextExe,
-                    Arguments = $"-layout \"{pdfPath}\" -",
+                    Arguments = $"-layout -enc UTF-8 \"{pdfPath}\" -",
                     UseShellExecute = false,
                     RedirectStandardOutput = true,
                     StandardOutputEncoding = Encoding.UTF8,
@@ -85,10 +89,13 @@ namespace TVPPdfConverter.Services
             var headerIdx = lines.FindIndex(l =>
             {
                 var norm = RemoveDiacritics(l).ToLowerInvariant();
-                return norm.Contains("concepto")
-                    && norm.Contains("instrumento")
-                    && norm.Contains("fechas")
-                    && norm.Contains("horario");
+                bool hasConcepto = norm.Contains("concepto");
+                bool hasInstrumento = norm.Contains("instrumento");
+                bool hasFechas = norm.Contains("fechas");
+                bool hasHorario = norm.Contains("horario");
+                // Also try "dias" without accent in case of encoding issues
+                bool hasDias = norm.Contains("días") || norm.Contains("dias") || l.Contains("D�as");
+                return hasConcepto && hasInstrumento && hasFechas && hasHorario && hasDias;
             });
             if (headerIdx < 0) yield break;
 
@@ -116,6 +123,9 @@ namespace TVPPdfConverter.Services
             int posFecha = headerNorm.IndexOf("fechas", StringComparison.Ordinal);
             int posHora = headerNorm.IndexOf("horario", StringComparison.Ordinal);
             int posDias = Ci.IndexOf(header, "días", CompareOptions.IgnoreCase | CompareOptions.IgnoreNonSpace);
+            if (posDias < 0) posDias = Ci.IndexOf(header, "dias", CompareOptions.IgnoreCase | CompareOptions.IgnoreNonSpace);
+            if (posDias < 0) posDias = header.IndexOf("D�as", StringComparison.Ordinal);
+
 
             // validamos offsets mínimos
             if (new[] { posConcept, posInstr, posFecha, posHora, posDias }.Any(p => p < 0))
@@ -137,18 +147,29 @@ namespace TVPPdfConverter.Services
                 if (trimmed.StartsWith("SUBTOTAL", StringComparison.OrdinalIgnoreCase))
                     break;
 
-                // artista con asterisco: "[*] Nombre"
-                var starMatch = Regex.Match(trimmed, @"^\[\*\]\s*(.+)$");
+                // artista con asterisco: "[*] Nombre" - puede incluir datos en la misma línea
+                var starMatch = Regex.Match(trimmed, @"^\[\*\]\s*([^\d\[\]]+?)(?:\s+\d{2}/\d{2}/\d{2,4}|$)");
                 if (starMatch.Success)
                 {
-                    currentArtist = starMatch.Groups[1].Value.Trim();
-                    continue;
+                    currentArtist = CleanArtistName(starMatch.Groups[1].Value.Trim());
+                    // Si la línea también contiene datos (fechas), no hacer continue
+                    if (!Regex.IsMatch(trimmed, @"\d{2}/\d{2}/\d{2,4}"))
+                    {
+                        continue; // Solo el nombre del artista
+                    }
+                    // Si contiene fechas, continuar procesando la línea como datos
                 }
 
-                // artista sin asterisco: solo letras y espacios
-                if (Regex.IsMatch(trimmed, @"^[\p{L} ]+$"))
+                // artista sin asterisco: solo letras, espacios y algunos caracteres especiales
+                // pero NO debe contener fechas, números que parezcan precios o patrones de datos
+                var artistOnlyPattern = @"^[A-ZÁÉÍÓÚÜÑ][A-ZÁÉÍÓÚÜÑ\s,\.''-]+$";
+                var containsDataPattern = @"\d{2}/\d{2}/\d{2,4}|:\d{2}|\d+\.\d+";
+                
+                if (Regex.IsMatch(trimmed, artistOnlyPattern) && 
+                    !Regex.IsMatch(trimmed, containsDataPattern) &&
+                    trimmed.Length <= 50) // Limitar longitud para evitar capturar líneas completas de datos
                 {
-                    currentArtist = trimmed;
+                    currentArtist = CleanArtistName(trimmed);
                     continue;
                 }
 
@@ -180,10 +201,15 @@ namespace TVPPdfConverter.Services
                     ? moneyMatches.Last()
                     : "0";
 
-                // Heurística: si el campo instrumento contiene patrones de fecha/hora
-                // o si las fechas/horas no parecen válidas, intentamos un parseo por regex de toda la línea.
-                bool suspect = instrumento.Contains("/") || instrumento.Contains(":") || instrumento.Contains(" a ");
-                if (suspect || string.IsNullOrWhiteSpace(fDesde) || string.IsNullOrWhiteSpace(hDesde))
+                // Heurística mejorada: detectar múltiples problemas de formato
+                bool suspect = instrumento.Contains("/") || instrumento.Contains(":") || instrumento.Contains(" a ") ||
+                              conceptoTxt.Contains("/") || conceptoTxt.Contains(":") ||
+                              string.IsNullOrWhiteSpace(fDesde) || string.IsNullOrWhiteSpace(hDesde) ||
+                              !Regex.IsMatch(fDesde, @"^\d{2}/\d{2}/\d{2,4}$") ||
+                              !Regex.IsMatch(hDesde, @"^\d{2}:\d{2}$") ||
+                              conceptoTxt.Length > 30 || instrumento.Length > 25; // Campos demasiado largos
+                              
+                if (suspect)
                 {
                     var m = DetailRegex.Match(line);
                     if (m.Success)
@@ -199,10 +225,15 @@ namespace TVPPdfConverter.Services
                     }
                 }
 
-                // valor numérico mínimo: validamos que tengamos fechas y horas
-                if (string.IsNullOrWhiteSpace(fDesde) || string.IsNullOrWhiteSpace(hDesde))
+                // valor numérico mínimo: validamos que tengamos fechas y horas válidas
+                // Si fDesde no es una fecha válida, intentar skipear esta línea
+                if (string.IsNullOrWhiteSpace(fDesde) || string.IsNullOrWhiteSpace(hDesde) ||
+                    !Regex.IsMatch(fDesde, @"^\d{2}/\d{2}/\d{2,4}$"))
                     continue;
 
+                // Debug: mostrar datos extraídos
+                Console.WriteLine($"[DEBUG] Line data - Artist: '{currentArtist}', Concept: '{conceptoTxt}', FDesde: '{fDesde}', FHasta: '{fHasta}', Invoice: '{invoice}', FechaEmi: {fechaEmi:yyyy-MM-dd}");
+                
                 // Crear línea temporal sin los valores adicionales (los agregaremos después)
                 detailLines.Add(new InvoiceLine(
                     invoice, fechaEmi,
@@ -226,10 +257,16 @@ namespace TVPPdfConverter.Services
             decimal subtotalFactura = 0m, aporteOS = 0m, jubilacion = 0m, recursoAdmin = 0m, tasa = 0m, transporte = 0m, totalFactura = 0m;
 
             // Continuar desde donde terminamos la tabla de detalle
+            Console.WriteLine($"[DEBUG] Buscando totales desde línea {i}...");
             for (int j = i; j < lines.Count; j++)
             {
                 var line = lines[j].Trim();
                 if (string.IsNullOrWhiteSpace(line)) continue;
+                
+                if (line.Contains("SUBTOTAL") || line.Contains("Aporte") || line.Contains("Jubilac") || line.Contains("TOTAL"))
+                {
+                    Console.WriteLine($"[DEBUG] Line {j}: '{line}'");
+                }
 
                 // Extraer SUBTOTAL
                 var subtotalMatch = Regex.Match(line, @"SUBTOTAL:\s*\$?\s*([\d,]+\.?\d*)", RegexOptions.IgnoreCase);
@@ -238,39 +275,44 @@ namespace TVPPdfConverter.Services
                     subtotalFactura = ParseDecimal(subtotalMatch.Groups[1].Value.Replace(",", ""));
                 }
 
-                // Extraer Aporte/Contribución O.S.
-                var aporteMatch = Regex.Match(line, @"Aporte/Contribuci[óo]n\s+O\.S\.:\s*\$?\s*([\d,]+\.?\d*)", RegexOptions.IgnoreCase);
+                // Extraer Aporte/Contribución O.S. - más flexible con encoding
+                var aporteMatch = Regex.Match(line, @"Aporte.*?O\.?S\.?\s*:?\s*\$?\s*([\d,]+\.?\d*)", RegexOptions.IgnoreCase);
                 if (aporteMatch.Success)
                 {
                     aporteOS = ParseDecimal(aporteMatch.Groups[1].Value.Replace(",", ""));
+                    Console.WriteLine($"[DEBUG] Found Aporte: {aporteOS}");
                 }
 
-                // Extraer Jubilación
-                var jubilacionMatch = Regex.Match(line, @"Jubilaci[óo]n:\s*\$?\s*([\d,]+\.?\d*)", RegexOptions.IgnoreCase);
+                // Extraer Jubilación - más flexible con encoding  
+                var jubilacionMatch = Regex.Match(line, @"Jubilac.*?:\s*\$?\s*([\d,]+\.?\d*)", RegexOptions.IgnoreCase);
                 if (jubilacionMatch.Success)
                 {
                     jubilacion = ParseDecimal(jubilacionMatch.Groups[1].Value.Replace(",", ""));
+                    Console.WriteLine($"[DEBUG] Found Jubilacion: {jubilacion}");
                 }
 
-                // Extraer Recurso Administrativo
-                var recursoMatch = Regex.Match(line, @"Recurso\s+Administrativo:\s*\$?\s*([\d,]+\.?\d*)", RegexOptions.IgnoreCase);
+                // Extraer Recurso Administrativo - más flexible
+                var recursoMatch = Regex.Match(line, @"Recurso.*?Administrativo.*?:\s*\$?\s*([\d,]+\.?\d*)", RegexOptions.IgnoreCase);
                 if (recursoMatch.Success)
                 {
                     recursoAdmin = ParseDecimal(recursoMatch.Groups[1].Value.Replace(",", ""));
+                    Console.WriteLine($"[DEBUG] Found RecursoAdmin: {recursoAdmin}");
                 }
 
-                // Extraer Tasa
-                var tasaMatch = Regex.Match(line, @"Tasa:\s*\$?\s*([\d,]+\.?\d*)", RegexOptions.IgnoreCase);
+                // Extraer Tasa - más flexible
+                var tasaMatch = Regex.Match(line, @"Tasa.*?:\s*\$?\s*([\d,]+\.?\d*)", RegexOptions.IgnoreCase);
                 if (tasaMatch.Success)
                 {
                     tasa = ParseDecimal(tasaMatch.Groups[1].Value.Replace(",", ""));
+                    Console.WriteLine($"[DEBUG] Found Tasa: {tasa}");
                 }
 
-                // Extraer Transporte
-                var transporteMatch = Regex.Match(line, @"Transporte:\s*\$?\s*([\d,]+\.?\d*)", RegexOptions.IgnoreCase);
+                // Extraer Transporte - más flexible
+                var transporteMatch = Regex.Match(line, @"Transporte.*?:\s*\$?\s*([\d,]+\.?\d*)", RegexOptions.IgnoreCase);
                 if (transporteMatch.Success)
                 {
                     transporte = ParseDecimal(transporteMatch.Groups[1].Value.Replace(",", ""));
+                    Console.WriteLine($"[DEBUG] Found Transporte: {transporte}");
                 }
 
                 // Extraer TOTAL
@@ -315,7 +357,30 @@ namespace TVPPdfConverter.Services
                 return string.Empty;
             if (end > text.Length)
                 end = text.Length;
-            return text.Substring(start, end - start).Trim();
+            
+            var result = text.Substring(start, end - start).Trim();
+            
+            // Limpiar caracteres especiales y múltiples espacios
+            result = Regex.Replace(result, @"\s+", " ");
+            
+            // Si el resultado contiene múltiples palabras separadas por muchos espacios,
+            // probablemente se desbordó a otras columnas
+            var words = result.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (words.Length > 1)
+            {
+                // Para campos como concepto/instrumento, limitar a las primeras palabras coherentes
+                var cleanWords = new List<string>();
+                foreach (var word in words)
+                {
+                    // Parar si encontramos algo que parece una fecha u hora
+                    if (Regex.IsMatch(word, @"^\d{2}/\d{2}|\d{2}:\d{2}$"))
+                        break;
+                    cleanWords.Add(word);
+                }
+                result = string.Join(" ", cleanWords);
+            }
+            
+            return result;
         }
 
         private static int ParseInt(string txt) =>
@@ -323,5 +388,19 @@ namespace TVPPdfConverter.Services
 
         private static decimal ParseDecimal(string txt) =>
             decimal.TryParse(txt, NumberStyles.Number, CultureInfo.InvariantCulture, out var d) ? d : 0m;
+
+        private static string CleanArtistName(string artistName)
+        {
+            if (string.IsNullOrWhiteSpace(artistName))
+                return artistName;
+
+            // Limpiar múltiples espacios
+            artistName = Regex.Replace(artistName, @"\s+", " ");
+            
+            // Remover texto de instrumentos/roles que puede haberse colado
+            artistName = Regex.Replace(artistName, @"\s+(Ejecutante\s+Musical|Guitarra|Piano|Violin|Bateria|Bajo).*$", "", RegexOptions.IgnoreCase);
+            
+            return artistName.Trim();
+        }
     }
 }

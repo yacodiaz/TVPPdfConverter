@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__ide__getDiagnostics",
+      "Bash(dir:*)",
+      "Bash(unzip:*)",
+      "Bash(pdftotext:*)",
+      "Bash(where pdftotext)",
+      "Bash(./pdftotext.exe:*)",
+      "Bash(dotnet build)",
+      "Bash(dumpbin:*)",
+      "Bash(ldd:*)",
+      "Bash(copy:*)",
+      "Bash(dotnet run:*)",
+      "Bash(dotnet new:*)",
+      "Bash(dotnet sln add:*)",
+      "Bash(dotnet add reference:*)",
+      "Bash(dotnet add package:*)",
+      "Bash(dotnet add package Moq)",
+      "Bash(dotnet clean:*)",
+      "Bash(dotnet build:*)",
+      "Bash(dotnet test:*)",
+      "Bash(dotnet script:*)",
+      "Bash(git stash:*)",
+      "Bash(taskkill:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

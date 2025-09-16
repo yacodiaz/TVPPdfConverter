@@ -181,17 +181,17 @@ namespace TVPPdfConverter.Services
                 // línea de detalle - usar análisis inteligente para evitar spillover
                 var (conceptoTxt, instrumento) = ExtractConceptAndInstrument(line, posConcept, posInstr, posFecha);
 
-                // fechas
-                var fechasTxt = Slice(line, posFecha, posHora);
-                var fParts = fechasTxt.Split(" a ");
-                var fDesde = fParts.ElementAtOrDefault(0) ?? string.Empty;
-                var fHasta = fParts.ElementAtOrDefault(1) ?? string.Empty;
+                // fechas - usar regex para extraer patrones de fecha desde la línea
+                var datePattern = @"(\d{2}/\d{2}/\d{2,4})\s*a\s*(\d{2}/\d{2}/\d{2,4})";
+                var dateMatch = Regex.Match(line, datePattern);
+                var fDesde = dateMatch.Success ? dateMatch.Groups[1].Value : string.Empty;
+                var fHasta = dateMatch.Success ? dateMatch.Groups[2].Value : string.Empty;
 
-                // horas
-                var horasTxt = Slice(line, posHora, posDias);
-                var hParts = horasTxt.Split(" a ");
-                var hDesde = hParts.ElementAtOrDefault(0) ?? string.Empty;
-                var hHasta = hParts.ElementAtOrDefault(1) ?? string.Empty;
+                // horas - usar regex para extraer patrones de hora
+                var timePattern = @"(\d{2}:\d{2})\s*a\s*(\d{2}:\d{2})";
+                var timeMatch = Regex.Match(line, timePattern);
+                var hDesde = timeMatch.Success ? timeMatch.Groups[1].Value : string.Empty;
+                var hHasta = timeMatch.Success ? timeMatch.Groups[2].Value : string.Empty;
 
                 // extraer unitario y subtotal con regex para mayor robustez
                 var moneyMatches = MoneyRegex.Matches(line)
@@ -206,12 +206,22 @@ namespace TVPPdfConverter.Services
                     : "0";
 
                 // Heurística mejorada: detectar múltiples problemas de formato
-                bool suspect = instrumento.Contains("/") || instrumento.Contains(":") || instrumento.Contains(" a ") ||
+                // Si ExtractConceptAndInstrument devolvió resultados válidos, confiar en ellos
+                // y solo aplicar suspect si hay problemas obvios en los campos de concepto/instrumento
+                bool validConceptAndInstrument = !string.IsNullOrWhiteSpace(conceptoTxt) && 
+                                               !string.IsNullOrWhiteSpace(instrumento) &&
+                                               !conceptoTxt.Contains("/") && !conceptoTxt.Contains(":") &&
+                                               !instrumento.Contains("/") && !instrumento.Contains(":") &&
+                                               !instrumento.Contains(" a ") && instrumento.Length <= 40;
+                
+                bool suspect = !validConceptAndInstrument && (
+                              instrumento.Contains("/") || instrumento.Contains(":") || instrumento.Contains(" a ") ||
                               conceptoTxt.Contains("/") || conceptoTxt.Contains(":") ||
                               string.IsNullOrWhiteSpace(fDesde) || string.IsNullOrWhiteSpace(hDesde) ||
                               !Regex.IsMatch(fDesde, @"^\d{2}/\d{2}/\d{2,4}$") ||
                               !Regex.IsMatch(hDesde, @"^\d{2}:\d{2}$") ||
-                              conceptoTxt.Length > 30 || instrumento.Length > 25; // Campos demasiado largos
+                              instrumento.Length > 40);
+                              
                               
                 if (suspect)
                 {
@@ -480,14 +490,18 @@ namespace TVPPdfConverter.Services
         private static (string concepto, string instrumento) ExtractConceptAndInstrument(string line, int posConcept, int posInstr, int posFecha)
         {
             // Validar límites antes de extraer
-            if (posConcept < 0 || posFecha <= posConcept || posConcept >= line.Length)
+            if (posConcept < 0 || posConcept >= line.Length)
                 return ("", "");
             
-            var endPos = Math.Min(posFecha, line.Length);
+            // En lugar de usar posFecha del header, buscar el primer patrón de fecha en la línea
+            var dateMatch = Regex.Match(line, @"\d{2}/\d{2}/\d{2,4}");
+            var actualDateStart = dateMatch.Success ? dateMatch.Index : line.Length;
+            
+            var endPos = Math.Min(actualDateStart, line.Length);
             var length = endPos - posConcept;
             if (length <= 0) return ("", "");
             
-            // Extraer todo el texto desde concepto hasta fechas
+            // Extraer todo el texto desde concepto hasta la primera fecha
             var fullText = line.Substring(posConcept, length).Trim();
             fullText = Regex.Replace(fullText, @"\s+", " ");
             

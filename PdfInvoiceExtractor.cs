@@ -69,7 +69,12 @@ namespace TVPPdfConverter.Services
                 }
                 text = sbAll.ToString();
             }
-
+            
+            return ExtractFromText(text);
+        }
+        
+        public IEnumerable<InvoiceLine> ExtractFromText(string text)
+        {
             // 2 – metadatos de cabecera
             var invM = Regex.Match(text, @"PRE\s*LIQUIDACI[ÓO]N\s*Nº\s*(\d+)", RegexOptions.IgnoreCase);
             var invoice = invM.Success ? invM.Groups[1].Value : string.Empty;
@@ -363,20 +368,66 @@ namespace TVPPdfConverter.Services
             // Limpiar caracteres especiales y múltiples espacios
             result = Regex.Replace(result, @"\s+", " ");
             
-            // Si el resultado contiene múltiples palabras separadas por muchos espacios,
-            // probablemente se desbordó a otras columnas
+            // Mejorar la detección de desbordamiento de columnas
             var words = result.Split(' ', StringSplitOptions.RemoveEmptyEntries);
             if (words.Length > 1)
             {
-                // Para campos como concepto/instrumento, limitar a las primeras palabras coherentes
                 var cleanWords = new List<string>();
-                foreach (var word in words)
+                var foundDateOrTime = false;
+                
+                for (int i = 0; i < words.Length; i++)
                 {
-                    // Parar si encontramos algo que parece una fecha u hora
-                    if (Regex.IsMatch(word, @"^\d{2}/\d{2}|\d{2}:\d{2}$"))
-                        break;
-                    cleanWords.Add(word);
+                    var word = words[i];
+                    
+                    // Detectar patrones que indican desbordamiento a columnas de fecha/hora
+                    bool isDatePattern = Regex.IsMatch(word, @"^\d{2}/\d{2}(/\d{2,4})?$");
+                    bool isTimePattern = Regex.IsMatch(word, @"^\d{2}:\d{2}$");
+                    bool isConnector = word.Equals("a", StringComparison.OrdinalIgnoreCase);
+                    
+                    // Si encontramos un patrón de fecha/hora, verificar si es realmente desbordamiento
+                    if (isDatePattern || isTimePattern)
+                    {
+                        // Solo cortar si:
+                        // 1. Ya tenemos al menos una palabra válida en el resultado
+                        // 2. Y el patrón viene seguido de más fechas/horas/números (indicando desbordamiento)
+                        if (cleanWords.Count > 0 && i < words.Length - 1)
+                        {
+                            var nextWord = words[i + 1];
+                            if (Regex.IsMatch(nextWord, @"^\d{2}[:/]\d{2}|^\d+$") || nextWord == "a")
+                            {
+                                foundDateOrTime = true;
+                                break;
+                            }
+                        }
+                        
+                        // Si es una fecha/hora al final, puede ser contenido válido
+                        if (i == words.Length - 1 && cleanWords.Count > 0)
+                        {
+                            // No incluir fechas/horas sueltas al final de campos de texto
+                            break;
+                        }
+                    }
+                    
+                    // Evitar cortar palabras que son parte legítima del contenido
+                    // como "Musical" en "Ejecutante Musical"
+                    if (!isDatePattern && !isTimePattern && !isConnector)
+                    {
+                        cleanWords.Add(word);
+                    }
+                    else if (isConnector && cleanWords.Count > 0)
+                    {
+                        // Incluir conectores si están en el contexto correcto
+                        cleanWords.Add(word);
+                    }
                 }
+                
+                // Si detectamos desbordamiento pero no tenemos palabras válidas,
+                // retornar la primera palabra para evitar campos vacíos
+                if (cleanWords.Count == 0 && words.Length > 0 && !foundDateOrTime)
+                {
+                    cleanWords.Add(words[0]);
+                }
+                
                 result = string.Join(" ", cleanWords);
             }
             

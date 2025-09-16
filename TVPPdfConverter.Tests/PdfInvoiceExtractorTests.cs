@@ -337,6 +337,88 @@ public class PdfInvoiceExtractorTests
     }
 
     [Fact]
+    public void Extract_ShouldNotTruncateConceptoAndInstrumento_WhenFollowedByDates()
+    {
+        // Arrange - Simular texto PDF que causa el problema de truncamiento
+        var problematicPdfText = @"SADEM
+PRE LIQUIDACIÓN Nº 24539
+Fecha de emisión: 15/09/2025
+Concepto                 Instrumento                    fechas            horario     días  Horas   Unitario      Subtotal
+[*] HERNANDEZ SARA
+                                                Ejecutante Musical              Guitarra Eléctrica           20/03/25 a 20/03/25  02:00 a 02:00   0     0      9000      14600     12000
+[*] CASTRO DANIEL ALBERTO
+                                                Ejecutante Musical              Violín Clásico               22/03/25 a 22/03/25  03:00 a 03:00   0     0      8500      13500     11500
+SUBTOTAL: $100000";
+
+        var extractor = new PdfTextExtractor("pdftotext");
+
+        // Act
+        var result = extractor.ExtractFromText(problematicPdfText).ToList();
+
+        // Assert
+        _output.WriteLine($"Extracted {result.Count} lines from test PDF");
+        Assert.True(result.Count >= 2, "Should extract at least 2 lines");
+        
+        foreach (var line in result)
+        {
+            _output.WriteLine($"Artist: '{line.Artista}', Concept: '{line.Concepto}', Instrument: '{line.Instrumento}'");
+            
+            // Verificar que Concepto no esté truncado
+            if (!string.IsNullOrWhiteSpace(line.Concepto))
+            {
+                Assert.Equal("Ejecutante Musical", line.Concepto);
+                Assert.False(line.Concepto.StartsWith("Ejecutante") && line.Concepto.Length < 10, 
+                           $"Concepto appears truncated: '{line.Concepto}'");
+            }
+            
+            // Verificar que Instrumento no esté truncado
+            if (!string.IsNullOrWhiteSpace(line.Instrumento))
+            {
+                Assert.True(line.Instrumento.Length > 4, $"Instrumento appears truncated: '{line.Instrumento}'");
+                Assert.False(line.Instrumento == "Guita", "Instrumento should not be truncated to 'Guita'");
+                Assert.False(line.Instrumento == "Violi", "Instrumento should not be truncated to 'Violi'");
+            }
+        }
+    }
+
+    [Fact]
+    public void Extract_ShouldHandleLongInstrumentNames_WithoutTruncation()
+    {
+        // Arrange - Caso específico de instrumentos largos
+        var pdfTextWithLongInstruments = @"SADEM
+PRE LIQUIDACIÓN Nº 24540
+Fecha de emisión: 15/09/2025
+Concepto                 Instrumento                    fechas            horario     días  Horas   Unitario      Subtotal
+[*] MARTINEZ JOSE LUIS
+                                                Ejecutante Musical              Guitarra Acústica de 12 Cuerdas  21/03/25 a 21/03/25  04:00 a 04:00   0     0      9500      15000     13000
+[*] RODRIGUEZ MARIA ELENA
+                                                Ejecutante Musical              Piano de Cola Steinway & Sons    22/03/25 a 22/03/25  02:30 a 02:30   0     0      12000     18000     16000
+SUBTOTAL: $150000";
+
+        var extractor = new PdfTextExtractor("pdftotext");
+
+        // Act
+        var result = extractor.ExtractFromText(pdfTextWithLongInstruments).ToList();
+
+        // Assert
+        _output.WriteLine($"Extracted {result.Count} lines from test PDF");
+        Assert.True(result.Count >= 2, "Should extract at least 2 lines");
+        
+        foreach (var line in result)
+        {
+            _output.WriteLine($"Artist: '{line.Artista}', Instrument: '{line.Instrumento}'");
+            
+            if (!string.IsNullOrWhiteSpace(line.Instrumento))
+            {
+                // Verificar que instrumentos largos no se corten
+                Assert.True(line.Instrumento.Length > 8, $"Long instrument name appears truncated: '{line.Instrumento}'");
+                Assert.False(line.Instrumento.Contains("21/03/25"), "Instrument should not contain date data");
+                Assert.False(line.Instrumento.Contains("04:00"), "Instrument should not contain time data");
+            }
+        }
+    }
+
+    [Fact]
     public async Task ProcessZipFile_ShouldExtractPdfData_FromSADEMYDC()
     {
         // Arrange - Test para archivos SADEM YDC específicos

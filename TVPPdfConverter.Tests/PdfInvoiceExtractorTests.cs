@@ -419,6 +419,98 @@ SUBTOTAL: $150000";
     }
 
     [Fact]
+    public void Extract_ShouldCorrectlyParseMultiWordConcepts_WithoutSpillover()
+    {
+        // Arrange - Simular texto que causa desbordamiento de "Horas de permanencia"
+        var spilloverPdfText = @"SADEM
+PRE LIQUIDACIÓN Nº 26259
+Fecha de emisión: 07/05/2025
+Concepto                 Instrumento                    fechas            horario     días  Horas   Unitario      Subtotal
+[*] MIÑO RAUL OSCAR
+                                                Horas de permanencia.                   Ejecutante Musical           07/03/25 a 07/03/25  00:00 a 02:00   0     0      9000      18000     1008000
+[*] ALCARAZ SEBASTIAN
+                                                Horas de permanencia.                   Ejecutante Musical           07/03/25 a 07/03/25  00:00 a 02:00   0     0      9000      18000     1008000
+SUBTOTAL: $1008000";
+
+        var extractor = new PdfTextExtractor("pdftotext");
+
+        // Act
+        var result = extractor.ExtractFromText(spilloverPdfText).ToList();
+
+        // Assert
+        _output.WriteLine($"Extracted {result.Count} lines from spillover test PDF");
+        
+        foreach (var line in result)
+        {
+            _output.WriteLine($"Artist: '{line.Artista}', Concept: '{line.Concepto}', Instrument: '{line.Instrumento}'");
+            
+            // Verificar que "Horas de permanencia" se mantenga completo en Concepto
+            if (!string.IsNullOrWhiteSpace(line.Concepto))
+            {
+                if (line.Concepto.Contains("Horas"))
+                {
+                    Assert.True(line.Concepto.Contains("permanencia"), 
+                              $"Concepto incomplete: '{line.Concepto}' should contain full 'Horas de permanencia'");
+                    Assert.False(line.Concepto == "Horas", 
+                               $"Concepto is truncated: '{line.Concepto}' should be 'Horas de permanencia'");
+                }
+            }
+            
+            // Verificar que Instrumento no contenga partes del concepto
+            if (!string.IsNullOrWhiteSpace(line.Instrumento))
+            {
+                Assert.False(line.Instrumento.StartsWith("de permanencia"), 
+                           $"Instrumento contains spillover from Concepto: '{line.Instrumento}'");
+                Assert.False(line.Instrumento.Contains("permanencia."), 
+                           $"Instrumento contains concept spillover: '{line.Instrumento}'");
+            }
+        }
+        
+        Assert.True(result.Count >= 2, "Should extract at least 2 lines");
+    }
+
+    [Fact]
+    public void Extract_ShouldHandleVariableSpacing_BetweenColumns()
+    {
+        // Arrange - Texto con espaciado variable que causa problemas de parsing
+        var variableSpacingText = @"SADEM
+PRE LIQUIDACIÓN Nº 26260
+Fecha de emisión: 07/05/2025
+Concepto                 Instrumento                    fechas            horario     días  Horas   Unitario      Subtotal
+[*] MARTINEZ PEDRO LUIS
+                                                Ejecutante Musical                                                   Guitarra Eléctrica               08/03/25 a 08/03/25  03:00 a 05:00   0     0      8500      17000
+[*] GONZALEZ ANA MARIA
+                                                Horas        de        permanencia                        Bajo Eléctrico                   08/03/25 a 08/03/25  01:30 a 03:30   0     0      9500      19000
+SUBTOTAL: $36000";
+
+        var extractor = new PdfTextExtractor("pdftotext");
+
+        // Act
+        var result = extractor.ExtractFromText(variableSpacingText).ToList();
+
+        // Assert
+        _output.WriteLine($"Extracted {result.Count} lines from variable spacing test");
+        
+        foreach (var line in result)
+        {
+            _output.WriteLine($"Concept: '{line.Concepto}' | Instrument: '{line.Instrumento}'");
+            
+            // Verificar que conceptos con espaciado variable se manejen correctamente
+            if (line.Concepto?.Contains("Horas") == true)
+            {
+                Assert.False(line.Concepto.Contains("Guitarra") || line.Concepto.Contains("Bajo"), 
+                           $"Concepto contains instrument data: '{line.Concepto}'");
+            }
+            
+            if (!string.IsNullOrWhiteSpace(line.Instrumento))
+            {
+                Assert.False(line.Instrumento.StartsWith("de") && line.Instrumento.Contains("permanencia"), 
+                           $"Instrumento starts with concept spillover: '{line.Instrumento}'");
+            }
+        }
+    }
+
+    [Fact]
     public async Task ProcessZipFile_ShouldExtractPdfData_FromSADEMYDC()
     {
         // Arrange - Test para archivos SADEM YDC específicos

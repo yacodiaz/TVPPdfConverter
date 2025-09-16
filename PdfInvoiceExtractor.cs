@@ -178,9 +178,8 @@ namespace TVPPdfConverter.Services
                     continue;
                 }
 
-                // línea de detalle
-                var conceptoTxt = Slice(line, posConcept, posInstr);
-                var instrumento = Slice(line, posInstr, posFecha);
+                // línea de detalle - usar análisis inteligente para evitar spillover
+                var (conceptoTxt, instrumento) = ExtractConceptAndInstrument(line, posConcept, posInstr, posFecha);
 
                 // fechas
                 var fechasTxt = Slice(line, posFecha, posHora);
@@ -356,7 +355,7 @@ namespace TVPPdfConverter.Services
             return sb.ToString().Normalize(NormalizationForm.FormC);
         }
 
-        private static string Slice(string text, int start, int end)
+        private static string SliceWithContext(string text, int start, int end, string fieldType = "")
         {
             if (start < 0 || end <= start || start >= text.Length)
                 return string.Empty;
@@ -368,70 +367,221 @@ namespace TVPPdfConverter.Services
             // Limpiar caracteres especiales y múltiples espacios
             result = Regex.Replace(result, @"\s+", " ");
             
-            // Mejorar la detección de desbordamiento de columnas
+            // Estrategia más inteligente para detectar desbordamiento
             var words = result.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            if (words.Length > 1)
+            if (words.Length <= 1) return result;
+            
+            var cleanWords = new List<string>();
+            var probableOverflow = false;
+            
+            // Patrones conocidos que pueden ser válidos en campos de concepto/instrumento
+            var validConceptPatterns = new[] { "horas", "permanencia", "ejecutante", "musical", "de" };
+            var validInstrumentPatterns = new[] { "guitarra", "piano", "violin", "bajo", "bateria", "voz", "canto", "eléctrica", "acústica", "clásico" };
+            
+            for (int i = 0; i < words.Length; i++)
             {
-                var cleanWords = new List<string>();
-                var foundDateOrTime = false;
+                var word = words[i].ToLowerInvariant();
+                var originalWord = words[i];
                 
-                for (int i = 0; i < words.Length; i++)
+                // Detectar patrones que claramente indican desbordamiento a otras columnas
+                bool isDatePattern = Regex.IsMatch(originalWord, @"^\d{2}/\d{2}(/\d{2,4})?$");
+                bool isTimePattern = Regex.IsMatch(originalWord, @"^\d{2}:\d{2}$");
+                bool isNumericValue = Regex.IsMatch(originalWord, @"^\d+(\.\d+)?$") && originalWord.Length > 1;
+                bool isDateConnector = originalWord.Equals("a", StringComparison.OrdinalIgnoreCase);
+                
+                // Si encontramos patrones de fecha/hora/números, verificar el contexto
+                if (isDatePattern || isTimePattern || isNumericValue)
                 {
-                    var word = words[i];
-                    
-                    // Detectar patrones que indican desbordamiento a columnas de fecha/hora
-                    bool isDatePattern = Regex.IsMatch(word, @"^\d{2}/\d{2}(/\d{2,4})?$");
-                    bool isTimePattern = Regex.IsMatch(word, @"^\d{2}:\d{2}$");
-                    bool isConnector = word.Equals("a", StringComparison.OrdinalIgnoreCase);
-                    
-                    // Si encontramos un patrón de fecha/hora, verificar si es realmente desbordamiento
-                    if (isDatePattern || isTimePattern)
+                    // Si ya tenemos contenido válido y encontramos estos patrones, probablemente es desbordamiento
+                    if (cleanWords.Count > 0)
                     {
-                        // Solo cortar si:
-                        // 1. Ya tenemos al menos una palabra válida en el resultado
-                        // 2. Y el patrón viene seguido de más fechas/horas/números (indicando desbordamiento)
-                        if (cleanWords.Count > 0 && i < words.Length - 1)
+                        // Verificar si los siguientes elementos también son fechas/números (confirma desbordamiento)
+                        bool hasMoreNumericAfter = false;
+                        for (int j = i + 1; j < Math.Min(i + 3, words.Length); j++)
                         {
-                            var nextWord = words[i + 1];
-                            if (Regex.IsMatch(nextWord, @"^\d{2}[:/]\d{2}|^\d+$") || nextWord == "a")
+                            if (Regex.IsMatch(words[j], @"^\d+|^\d{2}[:/]\d{2}") || words[j] == "a")
                             {
-                                foundDateOrTime = true;
+                                hasMoreNumericAfter = true;
                                 break;
                             }
                         }
                         
-                        // Si es una fecha/hora al final, puede ser contenido válido
-                        if (i == words.Length - 1 && cleanWords.Count > 0)
+                        if (hasMoreNumericAfter)
                         {
-                            // No incluir fechas/horas sueltas al final de campos de texto
+                            probableOverflow = true;
                             break;
                         }
                     }
-                    
-                    // Evitar cortar palabras que son parte legítima del contenido
-                    // como "Musical" en "Ejecutante Musical"
-                    if (!isDatePattern && !isTimePattern && !isConnector)
-                    {
-                        cleanWords.Add(word);
-                    }
-                    else if (isConnector && cleanWords.Count > 0)
-                    {
-                        // Incluir conectores si están en el contexto correcto
-                        cleanWords.Add(word);
-                    }
                 }
                 
-                // Si detectamos desbordamiento pero no tenemos palabras válidas,
-                // retornar la primera palabra para evitar campos vacíos
-                if (cleanWords.Count == 0 && words.Length > 0 && !foundDateOrTime)
+                // Incluir conectores válidos
+                if (isDateConnector && cleanWords.Count > 0 && i < words.Length - 1)
                 {
-                    cleanWords.Add(words[0]);
+                    // Solo incluir "a" si está entre palabras válidas (no entre números)
+                    var prevWordValid = cleanWords.Count > 0 && !Regex.IsMatch(cleanWords.Last(), @"^\d+$");
+                    var nextWordValid = i + 1 < words.Length && !Regex.IsMatch(words[i + 1], @"^\d{2}/\d{2}");
+                    if (prevWordValid && nextWordValid)
+                    {
+                        cleanWords.Add(originalWord);
+                    }
+                    continue;
                 }
                 
-                result = string.Join(" ", cleanWords);
+                // Para campos de concepto, mantener frases comunes
+                if (fieldType.Contains("concept", StringComparison.OrdinalIgnoreCase) || fieldType == "")
+                {
+                    if (validConceptPatterns.Any(p => word.Contains(p)) || 
+                        (cleanWords.Count > 0 && validConceptPatterns.Any(p => cleanWords.Last().ToLowerInvariant().Contains(p))))
+                    {
+                        cleanWords.Add(originalWord);
+                        continue;
+                    }
+                }
+                
+                // Para campos de instrumento, mantener instrumentos conocidos
+                if (fieldType.Contains("instrument", StringComparison.OrdinalIgnoreCase) || fieldType == "")
+                {
+                    if (validInstrumentPatterns.Any(p => word.Contains(p)))
+                    {
+                        cleanWords.Add(originalWord);
+                        continue;
+                    }
+                }
+                
+                // Incluir palabras que no son claramente datos numéricos/fechas
+                if (!isDatePattern && !isTimePattern && !isNumericValue)
+                {
+                    cleanWords.Add(originalWord);
+                }
             }
             
-            return result;
+            // Si no obtuvimos nada después del filtrado, mantener al menos las primeras palabras válidas
+            if (cleanWords.Count == 0 && words.Length > 0)
+            {
+                // Tomar las primeras palabras que no sean claramente numéricas
+                for (int i = 0; i < Math.Min(3, words.Length); i++)
+                {
+                    if (!Regex.IsMatch(words[i], @"^\d{2}[:/]\d{2}|^\d+$"))
+                    {
+                        cleanWords.Add(words[i]);
+                        if (cleanWords.Count >= 2) break; // Limitar para evitar desbordamiento
+                    }
+                }
+            }
+            
+            return string.Join(" ", cleanWords).Trim();
+        }
+        
+        private static string Slice(string text, int start, int end)
+        {
+            return SliceWithContext(text, start, end, "");
+        }
+        
+        private static (string concepto, string instrumento) ExtractConceptAndInstrument(string line, int posConcept, int posInstr, int posFecha)
+        {
+            // Validar límites antes de extraer
+            if (posConcept < 0 || posFecha <= posConcept || posConcept >= line.Length)
+                return ("", "");
+            
+            var endPos = Math.Min(posFecha, line.Length);
+            var length = endPos - posConcept;
+            if (length <= 0) return ("", "");
+            
+            // Extraer todo el texto desde concepto hasta fechas
+            var fullText = line.Substring(posConcept, length).Trim();
+            fullText = Regex.Replace(fullText, @"\s+", " ");
+            
+            var words = fullText.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (words.Length == 0) return ("", "");
+            
+            // Patrones conocidos para determinar dónde termina concepto y empieza instrumento
+            var conceptTerminators = new[] { "musical", "permanencia", "permanencia." };
+            var instrumentStartWords = new[] { "ejecutante", "guitarra", "piano", "violin", "voz", "bajo", "bateria", "canto" };
+            
+            var conceptWords = new List<string>();
+            var instrumentWords = new List<string>();
+            bool switchedToInstrument = false;
+            
+            for (int i = 0; i < words.Length; i++)
+            {
+                var word = words[i].ToLowerInvariant().TrimEnd('.', ':');
+                
+                // Si encontramos una palabra que claramente indica inicio de instrumento
+                if (instrumentStartWords.Any(starter => word.Contains(starter)))
+                {
+                    switchedToInstrument = true;
+                    instrumentWords.Add(words[i]);
+                    continue;
+                }
+                
+                // Si ya cambiamos a instrumento, todo va a instrumento
+                if (switchedToInstrument)
+                {
+                    instrumentWords.Add(words[i]);
+                    continue;
+                }
+                
+                // Si encontramos terminadores de concepto
+                if (conceptTerminators.Any(terminator => word.Contains(terminator)))
+                {
+                    conceptWords.Add(words[i]);
+                    // Los siguientes van a instrumento
+                    switchedToInstrument = true;
+                    continue;
+                }
+                
+                // Heurística: si tenemos conceptos multi-palabra comunes
+                bool isConceptWord = false;
+                if (conceptWords.Count > 0)
+                {
+                    var lastConceptWord = conceptWords.Last().ToLowerInvariant();
+                    if ((lastConceptWord.Contains("horas") && word == "de") ||
+                        (lastConceptWord == "de" && word.Contains("permanencia")))
+                    {
+                        isConceptWord = true;
+                    }
+                }
+                else if (word.Contains("horas") || word == "[*]")
+                {
+                    isConceptWord = true;
+                }
+                
+                if (isConceptWord)
+                {
+                    conceptWords.Add(words[i]);
+                }
+                else
+                {
+                    // Si no es claramente concepto y tenemos algo ya, probablemente es instrumento
+                    if (conceptWords.Count > 0)
+                    {
+                        switchedToInstrument = true;
+                        instrumentWords.Add(words[i]);
+                    }
+                    else
+                    {
+                        // Primera palabra por defecto va a concepto
+                        conceptWords.Add(words[i]);
+                    }
+                }
+            }
+            
+            // Limpiar resultados
+            var concepto = string.Join(" ", conceptWords).Trim().TrimEnd('.', ':');
+            var instrumento = string.Join(" ", instrumentWords).Trim();
+            
+            // Si instrumento está vacío pero concepto tiene "Ejecutante Musical", redistribuir
+            if (string.IsNullOrWhiteSpace(instrumento) && concepto.Contains("Ejecutante Musical"))
+            {
+                var conceptParts = concepto.Split(new[] { "Ejecutante Musical" }, StringSplitOptions.None);
+                if (conceptParts.Length > 1)
+                {
+                    concepto = conceptParts[0].Trim().TrimEnd('.', ':');
+                    instrumento = "Ejecutante Musical" + conceptParts[1].Trim();
+                }
+            }
+            
+            return (concepto, instrumento);
         }
 
         private static int ParseInt(string txt) =>

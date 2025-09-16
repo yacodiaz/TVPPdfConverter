@@ -191,7 +191,7 @@ public class InvoicesController : ControllerBase
             ? $"Se extrajeron {summary.Lines.Count} filas desde {summary.ParsedPdfs} PDF(s). Duplicados: {summary.Duplicates}. Sin datos: {summary.NoDataPdfs}."
             : (summary.Duplicates == summary.TotalPdfs && summary.TotalPdfs > 0 ? "Todos los PDFs están marcados como DUPLICADO." : (summary.TotalPdfs == 0 ? "El ZIP no contiene PDFs." : "No se pudo extraer información de los PDFs."));
 
-        return Ok(new { summary.TotalPdfs, summary.Duplicates, summary.ParsedPdfs, summary.NoDataPdfs, summary.Errors, rows = summary.Lines, message });
+        return Ok(new { summary.TotalPdfs, summary.Duplicates, summary.ParsedPdfs, summary.NoDataPdfs, summary.Errors, rows = summary.Lines, message, summary.CurrentFile, summary.ProcessingProgress });
     }
 
     private sealed class UploadSummary
@@ -202,6 +202,8 @@ public class InvoicesController : ControllerBase
         public int NoDataPdfs { get; set; }
         public List<string> Errors { get; set; } = new();
         public List<InvoiceLine> Lines { get; set; } = new();
+        public string? CurrentFile { get; set; }
+        public int ProcessingProgress { get; set; }
     }
 
     private static bool IsDuplicatePdf(string path)
@@ -250,7 +252,13 @@ public class InvoicesController : ControllerBase
                 try
                 {
                     processed++;
-                    _logger.LogInformation("[PROCESS] ({Idx}/{Total}) Procesando {File} (dup={Dup})...", processed, totalToProcess, Path.GetFileName(path), isDup);
+                    var fileName = Path.GetFileName(path);
+                    _logger.LogInformation("[PROCESS] ({Idx}/{Total}) Procesando {File} (dup={Dup})...", processed, totalToProcess, fileName, isDup);
+
+                    // Add current file to summary for UI tracking
+                    s.CurrentFile = fileName;
+                    s.ProcessingProgress = totalToProcess == 0 ? 100 : (int)Math.Round((processed - 1) * 100.0 / totalToProcess);
+
                     var before = s.Lines.Count;
                     foreach (var ln in _extractor.Extract(path))
                     {
@@ -261,7 +269,7 @@ public class InvoicesController : ControllerBase
                     var added = s.Lines.Count - before;
                     if (added > 0) s.ParsedPdfs++; else s.NoDataPdfs++;
                     var pct = totalToProcess == 0 ? 100 : (int)Math.Round(processed * 100.0 / totalToProcess);
-                    _logger.LogInformation("[PROCESS] ({Idx}/{Total}) Finalizado {File}. Filas agregadas={Added}. Avance={Pct}%", processed, totalToProcess, Path.GetFileName(path), added, pct);
+                    _logger.LogInformation("[PROCESS] ({Idx}/{Total}) Finalizado {File}. Filas agregadas={Added}. Avance={Pct}%", processed, totalToProcess, fileName, added, pct);
                 }
                 catch (Exception ex)
                 {

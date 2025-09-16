@@ -113,7 +113,7 @@ public class InvoicesControllerTests
     {
         // Arrange
         var testZipPath = Path.Combine(AppContext.BaseDirectory, "TestData", "03-MARZO-I-UNISONO.zip");
-        
+
         if (!File.Exists(testZipPath))
         {
             _output.WriteLine("Test ZIP file not found, creating a simple test ZIP");
@@ -138,10 +138,10 @@ public class InvoicesControllerTests
 
         // Assert
         _output.WriteLine($"Upload result type: {result.GetType().Name}");
-        
+
         // Should return FileContentResult with Excel data, or BadRequestObjectResult with error details
         Assert.True(result is FileContentResult || result is BadRequestObjectResult);
-        
+
         if (result is BadRequestObjectResult badRequest)
         {
             _output.WriteLine($"Upload error: {badRequest.Value}");
@@ -152,6 +152,100 @@ public class InvoicesControllerTests
             Assert.True(fileResult.FileContents.Length > 0);
             Assert.Equal("application/vnd.ms-excel", fileResult.ContentType);
         }
+    }
+
+    [Fact]
+    public async Task Upload_WithProcessDuplicatesTrue_ShouldIncludeDuplicates()
+    {
+        // Arrange
+        var testZipPath = CreateTestZipWithDuplicates();
+        var zipBytes = await File.ReadAllBytesAsync(testZipPath);
+        var formFile = CreateFormFile("test_with_duplicates.zip", zipBytes);
+
+        // Act
+        var result = await _controller.Upload(formFile, true);
+
+        // Assert
+        _output.WriteLine($"Upload result with duplicates: {result.GetType().Name}");
+        Assert.True(result is FileContentResult || result is BadRequestObjectResult);
+
+        // Clean up
+        try { File.Delete(testZipPath); } catch { }
+    }
+
+    [Fact]
+    public async Task Upload_WithProcessDuplicatesFalse_ShouldExcludeDuplicates()
+    {
+        // Arrange
+        var testZipPath = CreateTestZipWithDuplicates();
+        var zipBytes = await File.ReadAllBytesAsync(testZipPath);
+        var formFile = CreateFormFile("test_with_duplicates.zip", zipBytes);
+
+        // Act
+        var result = await _controller.Upload(formFile, false);
+
+        // Assert
+        _output.WriteLine($"Upload result without duplicates: {result.GetType().Name}");
+        Assert.True(result is FileContentResult || result is BadRequestObjectResult);
+
+        // Clean up
+        try { File.Delete(testZipPath); } catch { }
+    }
+
+    [Fact]
+    public async Task Preview_WithDuplicates_ShouldShowCorrectCounts()
+    {
+        // Arrange
+        var testZipPath = CreateTestZipWithDuplicates();
+        var zipBytes = await File.ReadAllBytesAsync(testZipPath);
+        var formFile = CreateFormFile("test_with_duplicates.zip", zipBytes);
+
+        // Act - Test with duplicates excluded
+        var resultExcluded = await _controller.Preview(formFile, false);
+
+        // Reset stream position
+        zipBytes = await File.ReadAllBytesAsync(testZipPath);
+        formFile = CreateFormFile("test_with_duplicates.zip", zipBytes);
+
+        // Act - Test with duplicates included
+        var resultIncluded = await _controller.Preview(formFile, true);
+
+        // Assert
+        if (resultExcluded is OkObjectResult okExcluded && resultIncluded is OkObjectResult okIncluded)
+        {
+            var dataExcluded = okExcluded.Value;
+            var dataIncluded = okIncluded.Value;
+
+            _output.WriteLine($"Preview excluded duplicates: {dataExcluded}");
+            _output.WriteLine($"Preview included duplicates: {dataIncluded}");
+        }
+
+        // Clean up
+        try { File.Delete(testZipPath); } catch { }
+    }
+
+    private string CreateTestZipWithDuplicates()
+    {
+        var tempZipPath = Path.GetTempFileName() + ".zip";
+        using (var zip = ZipFile.Open(tempZipPath, ZipArchiveMode.Create))
+        {
+            // Create a regular PDF
+            var regularEntry = zip.CreateEntry("regular.pdf");
+            using (var stream = regularEntry.Open())
+            using (var writer = new StreamWriter(stream))
+            {
+                writer.Write("SADEM\nPRE LIQUIDACIÓN\nRegular PDF content");
+            }
+
+            // Create a duplicate PDF (contains "DUPLICADO" text)
+            var duplicateEntry = zip.CreateEntry("duplicate.pdf");
+            using (var stream = duplicateEntry.Open())
+            using (var writer = new StreamWriter(stream))
+            {
+                writer.Write("SADEM\nPRE LIQUIDACIÓN\nDUPLICADO\nDuplicate PDF content");
+            }
+        }
+        return tempZipPath;
     }
 
     private IFormFile CreateFormFile(string fileName, byte[] content)

@@ -184,6 +184,9 @@ function displayResults(data) {
     document.getElementById('sum-parsed').textContent = data.parsedPdfs || 0;
     document.getElementById('sum-dups').textContent = data.duplicates || 0;
     document.getElementById('sum-nodata').textContent = data.noDataPdfs || 0;
+
+    // Update current file display if available
+    updateCurrentFileDisplay(data.currentFile, data.processingProgress);
     
     // Display errors if any
     if (data.errors && data.errors.length > 0) {
@@ -284,6 +287,7 @@ function showProgress(show, message = 'Procesando...') {
         progressBar.dataset.interval = interval;
     } else {
         progressContainer.style.display = 'none';
+        document.getElementById('current-file').style.display = 'none';
         if (progressBar.dataset.interval) {
             clearInterval(progressBar.dataset.interval);
         }
@@ -300,6 +304,23 @@ function showStatus(message, type = 'info') {
         setTimeout(() => {
             statusMessage.style.display = 'none';
         }, 5000);
+    }
+}
+
+function updateCurrentFileDisplay(currentFile, progress) {
+    const currentFileDiv = document.getElementById('current-file');
+    const currentFileNameSpan = document.getElementById('current-file-name');
+
+    if (currentFile) {
+        currentFileNameSpan.textContent = currentFile;
+        currentFileDiv.style.display = 'block';
+
+        // Update progress if provided
+        if (typeof progress === 'number') {
+            progressBar.style.width = `${Math.min(100, Math.max(0, progress))}%`;
+        }
+    } else {
+        currentFileDiv.style.display = 'none';
     }
 }
 

@@ -18,6 +18,8 @@ const errorsList = document.getElementById('errors');
 // State
 let currentFile = null;
 let previewData = null;
+let currentSessionId = null;
+let progressInterval = null;
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
@@ -93,36 +95,42 @@ async function handlePreview() {
         showStatus('Por favor, selecciona un archivo ZIP primero', 'error');
         return;
     }
-    
+
+    currentSessionId = generateSessionId();
     const formData = new FormData();
     formData.append('zip', currentFile);
     formData.append('processDuplicates', duplicatesCheckbox.checked);
-    
+    formData.append('sessionId', currentSessionId);
+
     try {
         showProgress(true, 'Analizando archivo...');
         previewButton.disabled = true;
         downloadButton.disabled = true;
-        
+
+        // Start progress monitoring
+        startProgressMonitoring();
+
         const response = await fetch('/api/invoices/preview', {
             method: 'POST',
             body: formData
         });
-        
+
         const data = await response.json();
-        
+
         if (!response.ok) {
             throw new Error(data.message || 'Error al procesar el archivo');
         }
-        
+
         previewData = data;
         displayResults(data);
         showStatus('Vista previa generada exitosamente', 'success');
-        
+
     } catch (error) {
         console.error('Error:', error);
         showStatus(`Error: ${error.message}`, 'error');
         hideResults();
     } finally {
+        stopProgressMonitoring();
         showProgress(false);
         previewButton.disabled = false;
         downloadButton.disabled = false;
@@ -134,25 +142,30 @@ async function handleDownload() {
         showStatus('Por favor, selecciona un archivo ZIP primero', 'error');
         return;
     }
-    
+
+    currentSessionId = generateSessionId();
     const formData = new FormData();
     formData.append('zip', currentFile);
     formData.append('processDuplicates', duplicatesCheckbox.checked);
-    
+    formData.append('sessionId', currentSessionId);
+
     try {
-        showProgress(true, 'Generando archivo Excel...');
+        showProgress(true, 'Iniciando procesamiento...');
         downloadButton.disabled = true;
-        
+
+        // Start progress monitoring
+        startProgressMonitoring();
+
         const response = await fetch('/api/invoices/upload', {
             method: 'POST',
             body: formData
         });
-        
+
         if (!response.ok) {
             const errorData = await response.json();
             throw new Error(errorData.message || 'Error al procesar el archivo');
         }
-        
+
         // Download the file
         const blob = await response.blob();
         const url = window.URL.createObjectURL(blob);
@@ -163,13 +176,14 @@ async function handleDownload() {
         a.click();
         document.body.removeChild(a);
         window.URL.revokeObjectURL(url);
-        
+
         showStatus('Archivo Excel descargado exitosamente', 'success');
-        
+
     } catch (error) {
         console.error('Error:', error);
         showStatus(`Error: ${error.message}`, 'error');
     } finally {
+        stopProgressMonitoring();
         showProgress(false);
         downloadButton.disabled = false;
     }
@@ -187,6 +201,14 @@ function displayResults(data) {
 
     // Update current file display if available
     updateCurrentFileDisplay(data.currentFile, data.processingProgress);
+
+    // Show preview limit message if applicable
+    if (data.isPreview && data.previewLimit) {
+        const previewInfo = document.createElement('div');
+        previewInfo.className = 'preview-info';
+        previewInfo.innerHTML = `<small><strong>Vista Previa:</strong> Se muestran máximo ${data.previewLimit} filas. Use "Descargar Excel" para obtener todos los datos.</small>`;
+        previewCard.insertBefore(previewInfo, previewCard.firstChild);
+    }
     
     // Display errors if any
     if (data.errors && data.errors.length > 0) {
@@ -274,23 +296,11 @@ function showProgress(show, message = 'Procesando...') {
     if (show) {
         progressContainer.style.display = 'block';
         progressLabel.textContent = message;
-        // Animate progress bar
-        let progress = 0;
-        const interval = setInterval(() => {
-            progress += Math.random() * 15;
-            if (progress > 90) {
-                clearInterval(interval);
-                progress = 90;
-            }
-            progressBar.style.width = `${progress}%`;
-        }, 200);
-        progressBar.dataset.interval = interval;
+        // Don't start fake animation - real progress will be updated via monitoring
+        progressBar.style.width = '0%';
     } else {
         progressContainer.style.display = 'none';
         document.getElementById('current-file').style.display = 'none';
-        if (progressBar.dataset.interval) {
-            clearInterval(progressBar.dataset.interval);
-        }
         progressBar.style.width = '0%';
     }
 }
@@ -321,6 +331,55 @@ function updateCurrentFileDisplay(currentFile, progress) {
         }
     } else {
         currentFileDiv.style.display = 'none';
+    }
+}
+
+function generateSessionId() {
+    return Date.now().toString(36) + Math.random().toString(36).substr(2);
+}
+
+function startProgressMonitoring() {
+    if (!currentSessionId) return;
+
+    progressInterval = setInterval(async () => {
+        try {
+            const response = await fetch(`/api/invoices/progress/${currentSessionId}`);
+            if (response.ok) {
+                const progress = await response.json();
+                updateProgressFromServer(progress);
+            }
+        } catch (error) {
+            console.error('Error fetching progress:', error);
+        }
+    }, 500); // Check every 500ms
+}
+
+function stopProgressMonitoring() {
+    if (progressInterval) {
+        clearInterval(progressInterval);
+        progressInterval = null;
+    }
+}
+
+function updateProgressFromServer(progress) {
+    if (!progress) return;
+
+    // Update progress bar
+    progressBar.style.width = `${progress.progress}%`;
+
+    // Update current file
+    if (progress.currentFile) {
+        updateCurrentFileDisplay(progress.currentFile, progress.progress);
+    }
+
+    // Update message
+    if (progress.message) {
+        progressLabel.textContent = progress.message;
+    }
+
+    // If completed, stop monitoring
+    if (progress.isCompleted) {
+        stopProgressMonitoring();
     }
 }
 

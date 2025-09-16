@@ -7,6 +7,7 @@ using ClosedXML.Excel;
 using System.Runtime.InteropServices;
 using UglyToad.PdfPig;
 using System.Text.Json;
+using System.Collections.Concurrent;
 
 namespace TVPPdfConverter.Controllers;
 
@@ -17,6 +18,7 @@ public class InvoicesController : ControllerBase
     private readonly PdfTextExtractor _extractor;
     private readonly PdfDiscoveryService _discovery;
     private readonly ILogger<InvoicesController> _logger;
+    private static readonly ConcurrentDictionary<string, ProcessingStatus> _progressTracker = new();
 
     public InvoicesController(PdfDiscoveryService discovery, ILogger<InvoicesController> logger)
     {
@@ -59,14 +61,17 @@ public class InvoicesController : ControllerBase
 
     [HttpPost("upload")]
     [Consumes("multipart/form-data")]
-    [ProducesResponseType(typeof(FileContentResult), Microsoft.AspNetCore.Http.StatusCodes.Status200OK, "application/vnd.ms-excel")] 
+    [ProducesResponseType(typeof(FileContentResult), Microsoft.AspNetCore.Http.StatusCodes.Status200OK, "application/vnd.ms-excel")]
     [ProducesResponseType(Microsoft.AspNetCore.Http.StatusCodes.Status400BadRequest)]
-    public async Task<IActionResult> Upload(IFormFile zip, [FromForm] bool processDuplicates = false)
+    public async Task<IActionResult> Upload(IFormFile zip, [FromForm] bool processDuplicates = false, [FromForm] string? sessionId = null)
     {
         if (zip == null || !zip.FileName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
             return BadRequest(new { message = "Debe subir un archivo .zip" });
 
-        var summary = await BuildSummaryAsync(zip.OpenReadStream(), HttpContext.RequestAborted, previewLimit: null, processDuplicates: processDuplicates);
+        // Generate session ID if not provided
+        sessionId ??= Guid.NewGuid().ToString();
+
+        var summary = await BuildSummaryAsync(zip.OpenReadStream(), HttpContext.RequestAborted, previewLimit: null, processDuplicates: processDuplicates, sessionId: sessionId);
         if (summary.Lines.Count == 0)
         {
             string message = summary.Duplicates == summary.TotalPdfs && summary.TotalPdfs > 0
@@ -77,7 +82,20 @@ public class InvoicesController : ControllerBase
             return BadRequest(new { message, totalPdfs = summary.TotalPdfs, duplicates = summary.Duplicates, parsedPdfs = summary.ParsedPdfs, noDataPdfs = summary.NoDataPdfs, summary.Errors });
         }
 
+        // Mark as completed
+        if (_progressTracker.TryGetValue(sessionId, out var status))
+        {
+            status.IsCompleted = true;
+            status.Message = "Generando archivo Excel...";
+            status.Progress = 100;
+            status.LastUpdated = DateTime.UtcNow;
+        }
+
         var bytes = ToExcel(summary.Lines);
+
+        // Clean up progress tracking
+        _progressTracker.TryRemove(sessionId, out _);
+
         return File(bytes, "application/vnd.ms-excel", "invoices.xls");
     }
 
@@ -181,17 +199,39 @@ public class InvoicesController : ControllerBase
     [Consumes("multipart/form-data")]
     [ProducesResponseType(typeof(object), 200, "application/json")]
     [ProducesResponseType(400)]
-    public async Task<IActionResult> Preview(IFormFile zip, [FromForm] bool processDuplicates = false)
+    public async Task<IActionResult> Preview(IFormFile zip, [FromForm] bool processDuplicates = false, [FromForm] string? sessionId = null)
     {
         if (zip == null || !zip.FileName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
             return BadRequest(new { message = "Debe subir un archivo .zip" });
 
-        var summary = await BuildSummaryAsync(zip.OpenReadStream(), HttpContext.RequestAborted, previewLimit: 200, processDuplicates: processDuplicates);
+        // Generate session ID if not provided
+        sessionId ??= Guid.NewGuid().ToString();
+
+        const int previewLimit = 200;
+        var summary = await BuildSummaryAsync(zip.OpenReadStream(), HttpContext.RequestAborted, previewLimit: previewLimit, processDuplicates: processDuplicates, sessionId: sessionId);
+
+        var limitMessage = summary.Lines.Count >= previewLimit
+            ? $" (mostrando primeras {previewLimit} filas para vista previa)"
+            : "";
+
         var message = summary.ParsedPdfs > 0
-            ? $"Se extrajeron {summary.Lines.Count} filas desde {summary.ParsedPdfs} PDF(s). Duplicados: {summary.Duplicates}. Sin datos: {summary.NoDataPdfs}."
+            ? $"Se extrajeron {summary.Lines.Count} filas desde {summary.ParsedPdfs} PDF(s). Duplicados: {summary.Duplicates}. Sin datos: {summary.NoDataPdfs}.{limitMessage}"
             : (summary.Duplicates == summary.TotalPdfs && summary.TotalPdfs > 0 ? "Todos los PDFs están marcados como DUPLICADO." : (summary.TotalPdfs == 0 ? "El ZIP no contiene PDFs." : "No se pudo extraer información de los PDFs."));
 
-        return Ok(new { summary.TotalPdfs, summary.Duplicates, summary.ParsedPdfs, summary.NoDataPdfs, summary.Errors, rows = summary.Lines, message, summary.CurrentFile, summary.ProcessingProgress });
+        // Clean up progress tracking for preview
+        _progressTracker.TryRemove(sessionId, out _);
+
+        return Ok(new { summary.TotalPdfs, summary.Duplicates, summary.ParsedPdfs, summary.NoDataPdfs, summary.Errors, rows = summary.Lines, message, summary.CurrentFile, summary.ProcessingProgress, isPreview = true, previewLimit, sessionId });
+    }
+
+    [HttpGet("progress/{sessionId}")]
+    public IActionResult GetProgress(string sessionId)
+    {
+        if (_progressTracker.TryGetValue(sessionId, out var status))
+        {
+            return Ok(status);
+        }
+        return NotFound(new { message = "Session not found" });
     }
 
     private sealed class UploadSummary
@@ -204,6 +244,18 @@ public class InvoicesController : ControllerBase
         public List<InvoiceLine> Lines { get; set; } = new();
         public string? CurrentFile { get; set; }
         public int ProcessingProgress { get; set; }
+        public string? SessionId { get; set; }
+    }
+
+    private sealed class ProcessingStatus
+    {
+        public int TotalFiles { get; set; }
+        public int ProcessedFiles { get; set; }
+        public int Progress { get; set; }
+        public string? CurrentFile { get; set; }
+        public bool IsCompleted { get; set; }
+        public string? Message { get; set; }
+        public DateTime LastUpdated { get; set; } = DateTime.UtcNow;
     }
 
     private static bool IsDuplicatePdf(string path)
@@ -211,16 +263,59 @@ public class InvoicesController : ControllerBase
         try
         {
             using var doc = PdfDocument.Open(path);
-            var text = doc.GetPage(1).Text;
-            return text.IndexOf("DUPLICADO", StringComparison.OrdinalIgnoreCase) >= 0;
+
+            // Check first page (most common location)
+            var firstPageText = doc.GetPage(1).Text.ToUpperInvariant();
+
+            // Multiple ways to detect duplicates
+            var duplicateIndicators = new[]
+            {
+                "DUPLICADO",
+                "DUPLICATE",
+                "COPIA",
+                "COPY",
+                "DUPLICATO", // Italian
+                "DUPLIKAT",  // German
+                "DUPLICATA"  // French/Portuguese
+            };
+
+            foreach (var indicator in duplicateIndicators)
+            {
+                if (firstPageText.Contains(indicator))
+                {
+                    return true;
+                }
+            }
+
+            // Also check filename for duplicate indicators
+            var fileName = Path.GetFileName(path).ToUpperInvariant();
+            foreach (var indicator in duplicateIndicators)
+            {
+                if (fileName.Contains(indicator))
+                {
+                    return true;
+                }
+            }
+
+            // Check for common duplicate patterns in text
+            if (firstPageText.Contains("ESTE ES UN DUPLICADO") ||
+                firstPageText.Contains("THIS IS A DUPLICATE") ||
+                firstPageText.Contains("DOCUMENTO DUPLICADO"))
+            {
+                return true;
+            }
+
+            return false;
         }
-        catch
+        catch (Exception ex)
         {
+            // Log the error but don't treat as duplicate
+            System.Diagnostics.Debug.WriteLine($"Error checking if PDF is duplicate: {ex.Message}");
             return false;
         }
     }
 
-    private async Task<UploadSummary> BuildSummaryAsync(Stream zipStream, CancellationToken ct, int? previewLimit = null, bool processDuplicates = false)
+    private async Task<UploadSummary> BuildSummaryAsync(Stream zipStream, CancellationToken ct, int? previewLimit = null, bool processDuplicates = false, string? sessionId = null)
     {
         var s = new UploadSummary();
         var temps = new List<(string path, bool isDup)>();
@@ -235,9 +330,18 @@ public class InvoicesController : ControllerBase
                 temps.Add((tmp, dup));
             }
             _logger.LogInformation("[DISCOVER] Encontrados {Total} PDFs (duplicados: {Dup}).", s.TotalPdfs, s.Duplicates);
+
+            // Log detailed duplicate detection info
+            foreach (var (path, isDup) in temps)
+            {
+                _logger.LogDebug("[DUPLICATE-CHECK] {File}: isDuplicate={IsDup}", Path.GetFileName(path), isDup);
+            }
+
             // Selección según preferencia del usuario
             var hasOriginals = temps.Exists(t => !t.isDup);
             var selected = processDuplicates ? temps : (hasOriginals ? temps.FindAll(t => !t.isDup) : temps);
+
+            _logger.LogInformation("Parámetro processDuplicates={ProcessDuplicates}", processDuplicates);
             _logger.LogInformation("Selección de PDFs: Totales={Total}, Originales={Originales}, Duplicados={Duplicados}. Se procesarán {Procesar} ({Tipo}).",
                 s.TotalPdfs,
                 temps.Count(t => !t.isDup),
@@ -247,6 +351,21 @@ public class InvoicesController : ControllerBase
 
             var totalToProcess = selected.Count;
             int processed = 0;
+
+            // Initialize progress tracking
+            if (!string.IsNullOrEmpty(sessionId))
+            {
+                _progressTracker[sessionId] = new ProcessingStatus
+                {
+                    TotalFiles = totalToProcess,
+                    ProcessedFiles = 0,
+                    Progress = 0,
+                    CurrentFile = null,
+                    IsCompleted = false,
+                    Message = "Iniciando procesamiento..."
+                };
+            }
+
             foreach (var (path, isDup) in selected)
             {
                 try
@@ -255,9 +374,19 @@ public class InvoicesController : ControllerBase
                     var fileName = Path.GetFileName(path);
                     _logger.LogInformation("[PROCESS] ({Idx}/{Total}) Procesando {File} (dup={Dup})...", processed, totalToProcess, fileName, isDup);
 
-                    // Add current file to summary for UI tracking
+                    // Update progress tracking
+                    var pct = totalToProcess == 0 ? 100 : (int)Math.Round((processed - 1) * 100.0 / totalToProcess);
                     s.CurrentFile = fileName;
-                    s.ProcessingProgress = totalToProcess == 0 ? 100 : (int)Math.Round((processed - 1) * 100.0 / totalToProcess);
+                    s.ProcessingProgress = pct;
+
+                    if (!string.IsNullOrEmpty(sessionId) && _progressTracker.TryGetValue(sessionId, out var status))
+                    {
+                        status.ProcessedFiles = processed - 1; // Files completed
+                        status.Progress = pct;
+                        status.CurrentFile = fileName;
+                        status.Message = $"Procesando {fileName}...";
+                        status.LastUpdated = DateTime.UtcNow;
+                    }
 
                     var before = s.Lines.Count;
                     foreach (var ln in _extractor.Extract(path))
@@ -268,8 +397,18 @@ public class InvoicesController : ControllerBase
                     }
                     var added = s.Lines.Count - before;
                     if (added > 0) s.ParsedPdfs++; else s.NoDataPdfs++;
-                    var pct = totalToProcess == 0 ? 100 : (int)Math.Round(processed * 100.0 / totalToProcess);
-                    _logger.LogInformation("[PROCESS] ({Idx}/{Total}) Finalizado {File}. Filas agregadas={Added}. Avance={Pct}%", processed, totalToProcess, fileName, added, pct);
+
+                    // Update progress after file completion
+                    var finalPct = totalToProcess == 0 ? 100 : (int)Math.Round(processed * 100.0 / totalToProcess);
+                    if (!string.IsNullOrEmpty(sessionId) && _progressTracker.TryGetValue(sessionId, out status))
+                    {
+                        status.ProcessedFiles = processed;
+                        status.Progress = finalPct;
+                        status.Message = $"Completado {fileName} ({added} filas)";
+                        status.LastUpdated = DateTime.UtcNow;
+                    }
+
+                    _logger.LogInformation("[PROCESS] ({Idx}/{Total}) Finalizado {File}. Filas agregadas={Added}. Avance={Pct}%", processed, totalToProcess, fileName, added, finalPct);
                 }
                 catch (Exception ex)
                 {

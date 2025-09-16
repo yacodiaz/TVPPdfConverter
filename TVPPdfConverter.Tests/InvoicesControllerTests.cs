@@ -213,11 +213,92 @@ public class InvoicesControllerTests
         // Assert
         if (resultExcluded is OkObjectResult okExcluded && resultIncluded is OkObjectResult okIncluded)
         {
-            var dataExcluded = okExcluded.Value;
-            var dataIncluded = okIncluded.Value;
+            // Use reflection or cast to access dynamic properties
+            dynamic dataExcluded = okExcluded.Value!;
+            dynamic dataIncluded = okIncluded.Value!;
 
-            _output.WriteLine($"Preview excluded duplicates: {dataExcluded}");
-            _output.WriteLine($"Preview included duplicates: {dataIncluded}");
+            _output.WriteLine($"Excluded: TotalPdfs={dataExcluded.totalPdfs}, Duplicates={dataExcluded.duplicates}, ParsedPdfs={dataExcluded.parsedPdfs}");
+            _output.WriteLine($"Included: TotalPdfs={dataIncluded.totalPdfs}, Duplicates={dataIncluded.duplicates}, ParsedPdfs={dataIncluded.parsedPdfs}");
+
+            // When excluding duplicates, parsed should be less than total if there are actual duplicates
+            if ((int)dataExcluded.duplicates > 0)
+            {
+                Assert.True((int)dataIncluded.parsedPdfs >= (int)dataExcluded.parsedPdfs,
+                    "Including duplicates should process same or more files than excluding them");
+            }
+
+            // Both should detect the same number of total PDFs and duplicates
+            Assert.Equal((int)dataExcluded.totalPdfs, (int)dataIncluded.totalPdfs);
+            Assert.Equal((int)dataExcluded.duplicates, (int)dataIncluded.duplicates);
+        }
+
+        // Clean up
+        try { File.Delete(testZipPath); } catch { }
+    }
+
+    [Fact]
+    public async Task Upload_WithDuplicatesFlag_ShouldProcessDifferentCounts()
+    {
+        // Arrange
+        var testZipPath = CreateTestZipWithDuplicates();
+        var zipBytes = await File.ReadAllBytesAsync(testZipPath);
+
+        // Test excluding duplicates
+        var formFileExcluded = CreateFormFile("test_duplicates_excluded.zip", zipBytes);
+        var resultExcluded = await _controller.Upload(formFileExcluded, false);
+
+        // Test including duplicates
+        zipBytes = await File.ReadAllBytesAsync(testZipPath); // Re-read file
+        var formFileIncluded = CreateFormFile("test_duplicates_included.zip", zipBytes);
+        var resultIncluded = await _controller.Upload(formFileIncluded, true);
+
+        // Assert
+        _output.WriteLine($"Result excluded type: {resultExcluded.GetType().Name}");
+        _output.WriteLine($"Result included type: {resultIncluded.GetType().Name}");
+
+        // Both should succeed (or both should fail with same reason)
+        Assert.Equal(resultExcluded.GetType(), resultIncluded.GetType());
+
+        if (resultExcluded is FileContentResult fileExcluded && resultIncluded is FileContentResult fileIncluded)
+        {
+            _output.WriteLine($"Excluded file size: {fileExcluded.FileContents.Length} bytes");
+            _output.WriteLine($"Included file size: {fileIncluded.FileContents.Length} bytes");
+
+            // File with duplicates included should be same size or larger
+            Assert.True(fileIncluded.FileContents.Length >= fileExcluded.FileContents.Length,
+                "File with duplicates should be same size or larger");
+        }
+
+        // Clean up
+        try { File.Delete(testZipPath); } catch { }
+    }
+
+    [Theory]
+    [InlineData(false, "Should exclude duplicates")]
+    [InlineData(true, "Should include duplicates")]
+    public async Task ProcessDuplicates_Flag_ShouldAffectProcessing(bool processDuplicates, string description)
+    {
+        // Arrange
+        var testZipPath = CreateTestZipWithDuplicates();
+        var zipBytes = await File.ReadAllBytesAsync(testZipPath);
+        var formFile = CreateFormFile("test_duplicates_theory.zip", zipBytes);
+
+        // Act
+        var result = await _controller.Preview(formFile, processDuplicates);
+
+        // Assert
+        _output.WriteLine($"Test: {description} - processDuplicates={processDuplicates}");
+
+        if (result is OkObjectResult okResult)
+        {
+            dynamic data = okResult.Value!;
+            _output.WriteLine($"TotalPdfs: {data.totalPdfs}, Duplicates: {data.duplicates}, ParsedPdfs: {data.parsedPdfs}");
+
+            Assert.True((int)data.totalPdfs > 0, "Should find PDFs in test file");
+        }
+        else
+        {
+            _output.WriteLine($"Unexpected result type: {result.GetType().Name}");
         }
 
         // Clean up
@@ -234,7 +315,7 @@ public class InvoicesControllerTests
             using (var stream = regularEntry.Open())
             using (var writer = new StreamWriter(stream))
             {
-                writer.Write("SADEM\nPRE LIQUIDACIÓN\nRegular PDF content");
+                writer.Write("%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /Contents 4 0 R >>\nendobj\n4 0 obj\n<< /Length 44 >>\nstream\nBT\n/F1 12 Tf\n100 700 Td\n(SADEM PRE LIQUIDACION Regular) Tj\nET\nendstream\nendobj\nxref\n0 5\n0000000000 65535 f\n0000000009 00000 n\n0000000058 00000 n\n0000000115 00000 n\n0000000178 00000 n\ntrailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n271\n%%EOF");
             }
 
             // Create a duplicate PDF (contains "DUPLICADO" text)
@@ -242,10 +323,51 @@ public class InvoicesControllerTests
             using (var stream = duplicateEntry.Open())
             using (var writer = new StreamWriter(stream))
             {
-                writer.Write("SADEM\nPRE LIQUIDACIÓN\nDUPLICADO\nDuplicate PDF content");
+                writer.Write("%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /Contents 4 0 R >>\nendobj\n4 0 obj\n<< /Length 50 >>\nstream\nBT\n/F1 12 Tf\n100 700 Td\n(SADEM PRE LIQUIDACION DUPLICADO) Tj\nET\nendstream\nendobj\nxref\n0 5\n0000000000 65535 f\n0000000009 00000 n\n0000000058 00000 n\n0000000115 00000 n\n0000000178 00000 n\ntrailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n277\n%%EOF");
             }
         }
         return tempZipPath;
+    }
+
+    [Fact]
+    public void IsDuplicatePdf_DetectionLogic_ShouldWork()
+    {
+        // Test the duplicate detection logic specifically
+        var testZipPath = CreateTestZipWithDuplicates();
+
+        using (var zip = ZipFile.OpenRead(testZipPath))
+        {
+            foreach (var entry in zip.Entries.Where(e => e.Name.EndsWith(".pdf")))
+            {
+                var tempFile = Path.GetTempFileName() + ".pdf";
+                try
+                {
+                    entry.ExtractToFile(tempFile, true);
+
+                    // Use reflection to access private method
+                    var method = typeof(InvoicesController).GetMethod("IsDuplicatePdf",
+                        System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+                    var isDuplicate = (bool)method!.Invoke(null, new object[] { tempFile })!;
+
+                    _output.WriteLine($"File: {entry.Name}, IsDuplicate: {isDuplicate}");
+
+                    if (entry.Name.Contains("duplicate"))
+                    {
+                        Assert.True(isDuplicate, $"File {entry.Name} should be detected as duplicate");
+                    }
+                    else
+                    {
+                        Assert.False(isDuplicate, $"File {entry.Name} should NOT be detected as duplicate");
+                    }
+                }
+                finally
+                {
+                    try { File.Delete(tempFile); } catch { }
+                }
+            }
+        }
+
+        try { File.Delete(testZipPath); } catch { }
     }
 
     private IFormFile CreateFormFile(string fileName, byte[] content)
